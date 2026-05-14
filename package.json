@@ -1,0 +1,69 @@
+{
+  "name": "visual-skill-builder-demo",
+  "version": "0.1.0",
+  "private": false,
+  "description": "A focused Electron app for visually importing, editing, generating, and exporting Codex skills.",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "npm run electron:compile && concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:compile": "tsc -p electron",
+    "build": "npm run electron:compile && vite build && electron-builder",
+    "electron:build": "npm run electron:compile && vite build && electron-builder",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "codex",
+    "skills",
+    "visual-editor",
+    "electron",
+    "react-flow"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@types/dagre": "^0.7.54",
+    "@xyflow/react": "^12.10.2",
+    "chokidar": "^3.6.0",
+    "dagre": "^0.8.5",
+    "diff-match-patch": "^1.0.5",
+    "elkjs": "^0.11.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.21.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/diff-match-patch": "^1.0.36",
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@types/uuid": "^9.0.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^8.2.2",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.10",
+    "vitest": "^4.1.5",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "dev.visualskillbuilder.demo",
+    "productName": "Visual Skill Builder",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}
