@@ -1,0 +1,4 @@
+{
+  "git.autoRepositoryDetection": true,
+  "scm.alwaysShowRepositories": true
+}
