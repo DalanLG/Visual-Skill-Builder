@@ -72,6 +72,10 @@ export function applySkillFlowRfSelectionPresentation(
     return n;
   });
 
+  const tracePacketOrder = new Map(
+    [...focusEdgeIds].sort((a, b) => a.localeCompare(b)).map((id, index) => [id, index] as const),
+  );
+
   const edges = baseEdges.map((e) => {
     const incident =
       hasSel && (sel.has(e.source) || sel.has(e.target)) && realNodeIds.has(e.source) && realNodeIds.has(e.target);
@@ -105,9 +109,25 @@ export function applySkillFlowRfSelectionPresentation(
       if (tracePulse) baseStyle.strokeDasharray = '9 5';
     }
 
+    const traceFlow =
+      traceOn && traceActive
+        ? 'active'
+        : traceOn && (tracePulse || focusEdgeIds.has(e.id))
+          ? 'pulse'
+          : undefined;
+
     return {
       ...e,
       style: baseStyle as Edge['style'],
+      data: {
+        ...(e.data && typeof e.data === 'object' && !Array.isArray(e.data) ? e.data : {}),
+        ...(traceFlow
+          ? {
+              traceFlow,
+              tracePacketIndex: tracePacketOrder.get(e.id) ?? 0,
+            }
+          : {}),
+      },
       selected: edgeSel,
       animated: traceFocused && (e.animated || tracePulse),
       ...(highlight ? { zIndex: tracePulse ? 120 : 90 } : {}),

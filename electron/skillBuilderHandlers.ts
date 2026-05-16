@@ -87,6 +87,32 @@ function resolveCodexCommand(raw: string, env: NodeJS.ProcessEnv, log: (msg: str
   return codexCmd;
 }
 
+function displayArg(arg: string): string {
+  return /[\s"]/u.test(arg) ? `"${arg.replace(/"/gu, '\\"')}"` : arg;
+}
+
+function resolveSpawnTarget(codexCmd: string, args: string[]): { command: string; args: string[]; display: string } {
+  const needsWindowsCommandProcessor =
+    process.platform === 'win32' &&
+    (!path.isAbsolute(codexCmd) || /\.(cmd|bat)$/iu.test(codexCmd));
+
+  if (!needsWindowsCommandProcessor) {
+    return {
+      command: codexCmd,
+      args,
+      display: [codexCmd, ...args].map(displayArg).join(' '),
+    };
+  }
+
+  const command = process.env.ComSpec || 'cmd.exe';
+  const wrappedArgs = ['/d', '/s', '/c', codexCmd, ...args];
+  return {
+    command,
+    args: wrappedArgs,
+    display: [command, ...wrappedArgs].map(displayArg).join(' '),
+  };
+}
+
 export function registerSkillBuilderHandlers(): void {
   ipcMain.handle('codex:exec', async (_e, payload: {
     workspaceRoot: string;
@@ -107,14 +133,33 @@ export function registerSkillBuilderHandlers(): void {
     const env = { ...process.env };
     const codexCmd = resolveCodexCommand(getCodexExecutable(), env, log);
 
+    try {
+      const cwdStat = fs.statSync(cwd);
+      if (!cwdStat.isDirectory()) return { ok: false, error: `Workspace path is not a directory: ${cwd}` };
+    } catch (e) {
+      return { ok: false, error: `Workspace path is not available: ${cwd} (${e instanceof Error ? e.message : String(e)})` };
+    }
+
     log(`[codex:exec] cmd="${codexCmd}" cwd="${cwd}" messageLen=${message.length}`);
     log(`[codex:exec] model=${codexModel}`);
     log(`[codex:exec] model_reasoning_effort=${reasoningEffort}`);
 
     return new Promise<{ ok: boolean; stdout?: string; stderr?: string; error?: string }>((resolve) => {
-      const args = ['exec', '--full-auto', '--model', codexModel, '-c', `model_reasoning_effort=${reasoningEffort}`, '--cd', cwd, '-'];
-      log(`[codex:exec] spawn: ${codexCmd} ${args.join(' ')} (prompt via stdin, len=${message.length})`);
-      const proc = spawn(codexCmd, args, {
+      const args = [
+        'exec',
+        '--full-auto',
+        '--skip-git-repo-check',
+        '--model',
+        codexModel,
+        '-c',
+        `model_reasoning_effort=${reasoningEffort}`,
+        '--cd',
+        cwd,
+        '-',
+      ];
+      const spawnTarget = resolveSpawnTarget(codexCmd, args);
+      log(`[codex:exec] spawn: ${spawnTarget.display} (prompt via stdin, len=${message.length})`);
+      const proc = spawn(spawnTarget.command, spawnTarget.args, {
         cwd,
         env,
         shell: false,

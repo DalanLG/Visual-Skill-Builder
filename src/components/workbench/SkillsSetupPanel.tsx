@@ -81,22 +81,48 @@ function formatMtime(ms: number): string {
 }
 
 const EMPTY_ISSUES: SkillValidationIssue[] = [];
-const SKILL_IMPORT_CODEX_TIMEOUT_MS = 75_000;
+const CODEX_GRAPH_IMPORT_TIMEOUT_MS = 10 * 60_000;
+const CODEX_GRAPH_IMPORT_REPAIR_TIMEOUT_MS = 4 * 60_000;
+const CODEX_PROMPT_GRAPH_TIMEOUT_MS = 4 * 60_000;
+const CODEX_PROMPT_GRAPH_REPAIR_TIMEOUT_MS = 2 * 60_000;
 
-function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  timeoutMessage: string,
+  onProgress?: (elapsedMs: number, remainingMs: number) => void,
+): Promise<T> {
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
     const timer = window.setTimeout(() => reject(new Error(timeoutMessage)), ms);
+    const progressTimer = onProgress
+      ? window.setInterval(() => {
+          const elapsedMs = Date.now() - startedAt;
+          onProgress(elapsedMs, Math.max(0, ms - elapsedMs));
+        }, 30_000)
+      : null;
+    const clearTimers = () => {
+      window.clearTimeout(timer);
+      if (progressTimer) window.clearInterval(progressTimer);
+    };
     promise.then(
       (value) => {
-        window.clearTimeout(timer);
+        clearTimers();
         resolve(value);
       },
       (error) => {
-        window.clearTimeout(timer);
+        clearTimers();
         reject(error);
       },
     );
   });
+}
+
+function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes ? `${minutes}m ${rest}s` : `${rest}s`;
 }
 
 interface SkillsSetupPanelProps {
@@ -718,15 +744,28 @@ function SkillsSetupInner({
         setOutlinePreview(markdownIr);
         appendLog('parse', `Markdown IR ready (${markdownIr.length.toLocaleString()} characters).`, 'info');
         appendLog('json', 'Requesting graph JSON (V2)…', 'info');
-        appendLog('codex', 'Calling Codex for canonical graph JSON (model gpt-5.4, medium reasoning).', 'info');
+        appendLog(
+          'codex',
+          `Calling Codex for canonical graph JSON (model gpt-5.4, medium reasoning). Large Markdown imports can take up to ${Math.round(
+            CODEX_GRAPH_IMPORT_TIMEOUT_MS / 60_000,
+          )} minutes.`,
+          'info',
+        );
         const r2 = await withTimeout(
           runCodexSkillImport(
             buildSkillMarkdownToGraphPromptV2({ markdownIr, sourcePath: rel }),
             undefined,
             { model: 'gpt-5.4', modelReasoningEffort: 'medium' },
           ),
-          SKILL_IMPORT_CODEX_TIMEOUT_MS,
+          CODEX_GRAPH_IMPORT_TIMEOUT_MS,
           'Codex graph import timed out before returning JSON.',
+          (elapsedMs, remainingMs) => {
+            appendLog(
+              'codex',
+              `Still waiting for Codex graph JSON (${formatDuration(elapsedMs)} elapsed, ${formatDuration(remainingMs)} before fallback).`,
+              'info',
+            );
+          },
         );
         if (!r2.ok) throw new Error(r2.error || 'JSON step failed');
         appendLog('codex', `Codex graph response received (${(r2.stdout || '').length.toLocaleString()} stdout chars).`, 'info');
@@ -743,8 +782,15 @@ function SkillsSetupInner({
               undefined,
               { model: 'gpt-5.4', modelReasoningEffort: 'medium' },
             ),
-            45_000,
+            CODEX_GRAPH_IMPORT_REPAIR_TIMEOUT_MS,
             'Codex graph repair timed out before returning JSON.',
+            (elapsedMs, remainingMs) => {
+              appendLog(
+                'repair',
+                `Still waiting for Codex repair JSON (${formatDuration(elapsedMs)} elapsed, ${formatDuration(remainingMs)} before fallback).`,
+                'info',
+              );
+            },
           );
           if (!r3.ok) throw new Error(r3.error || 'Repair step failed');
           appendLog('repair', `Repair response received (${(r3.stdout || '').length.toLocaleString()} stdout chars).`, 'info');
@@ -848,15 +894,28 @@ function SkillsSetupInner({
     activeImportRef.current = true;
     appendLog('json', 'Creating canonical graph from prompt...', 'info');
     try {
-      appendLog('codex', 'Calling Codex for prompt-to-graph (model gpt-5.4-mini, medium reasoning).', 'info');
+      appendLog(
+        'codex',
+        `Calling Codex for prompt-to-graph (model gpt-5.4-mini, medium reasoning). Waiting up to ${Math.round(
+          CODEX_PROMPT_GRAPH_TIMEOUT_MS / 60_000,
+        )} minutes.`,
+        'info',
+      );
       const r = await withTimeout(
         runCodexSkillImport(
           buildSkillPromptToGraphPromptV2(prompt),
           undefined,
           { model: 'gpt-5.4-mini', modelReasoningEffort: 'medium' },
         ),
-        60_000,
+        CODEX_PROMPT_GRAPH_TIMEOUT_MS,
         'Codex prompt-to-graph timed out before returning JSON.',
+        (elapsedMs, remainingMs) => {
+          appendLog(
+            'codex',
+            `Still waiting for prompt graph JSON (${formatDuration(elapsedMs)} elapsed, ${formatDuration(remainingMs)} before timeout).`,
+            'info',
+          );
+        },
       );
       if (!r.ok) throw new Error(r.error || 'Prompt-to-graph failed');
       appendLog('codex', `Codex prompt graph response received (${(r.stdout || '').length.toLocaleString()} stdout chars).`, 'info');
@@ -870,8 +929,15 @@ function SkillsSetupInner({
             undefined,
             { model: 'gpt-5.4-mini', modelReasoningEffort: 'medium' },
           ),
-          35_000,
+          CODEX_PROMPT_GRAPH_REPAIR_TIMEOUT_MS,
           'Codex prompt graph repair timed out before returning JSON.',
+          (elapsedMs, remainingMs) => {
+            appendLog(
+              'repair',
+              `Still waiting for prompt graph repair (${formatDuration(elapsedMs)} elapsed, ${formatDuration(remainingMs)} before timeout).`,
+              'info',
+            );
+          },
         );
         if (!repaired.ok) throw new Error(repaired.error || 'Repair step failed');
         parsed = parseSkillFlowGraphAnyFromStdout(repaired.stdout || repaired.stderr || '');

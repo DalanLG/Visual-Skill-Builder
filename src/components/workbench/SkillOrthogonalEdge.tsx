@@ -14,6 +14,9 @@ export type SkillOrthogonalEdgeData = {
   routingPrimary?: OrthogonalRoutingPrimary;
   /** Variable bus edges only: `read` draws a junction dot at the variable end (see stroke colour). */
   variableEdgeRole?: 'write' | 'read';
+  /** Play-mode data-flow packet animation. */
+  traceFlow?: 'active' | 'pulse';
+  tracePacketIndex?: number;
 };
 
 const VARIABLE_BUS_STROKE = '#8fd3e8';
@@ -26,6 +29,40 @@ function strokeFromEdgeProps(props: EdgeProps): string {
     return (st as { stroke: string }).stroke;
   }
   return VARIABLE_BUS_STROKE;
+}
+
+function svgIdFromEdgeId(edgeId: string): string {
+  let hash = 0;
+  for (let i = 0; i < edgeId.length; i++) {
+    hash = (hash * 31 + edgeId.charCodeAt(i)) >>> 0;
+  }
+  return `skill-flow-packet-path-${edgeId.replace(/[^a-zA-Z0-9_-]+/g, '-')}-${hash.toString(36)}`;
+}
+
+function midpoint(points: { x: number; y: number }[]): { x: number; y: number } {
+  if (points.length === 0) return { x: 0, y: 0 };
+  if (points.length === 1) return points[0];
+  const total = points.slice(1).reduce((sum, p, index) => {
+    const prev = points[index];
+    return sum + Math.hypot(p.x - prev.x, p.y - prev.y);
+  }, 0);
+  if (total <= 0) return points[Math.floor(points.length / 2)];
+  let walked = 0;
+  const target = total / 2;
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const cur = points[i];
+    const len = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+    if (walked + len >= target) {
+      const t = len > 0 ? (target - walked) / len : 0;
+      return {
+        x: prev.x + (cur.x - prev.x) * t,
+        y: prev.y + (cur.y - prev.y) * t,
+      };
+    }
+    walked += len;
+  }
+  return points[points.length - 1];
 }
 
 export function simplifyRoutedPoints(points: { x: number; y: number }[], eps = POINT_EPS): { x: number; y: number }[] {
@@ -85,6 +122,7 @@ function SkillOrthogonalEdge(props: EdgeProps) {
   const pts = data?.points;
 
   let pathD: string;
+  let packetPoints: { x: number; y: number }[];
   if (mode === 'interactive') {
     const lane = data?.laneMidOffset ?? 0;
     const prim = data?.routingPrimary ?? 'horizontal';
@@ -104,15 +142,28 @@ function SkillOrthogonalEdge(props: EdgeProps) {
             props.targetY,
             lane,
           );
+    packetPoints = ip;
     pathD = roundedPolylinePath(ip);
   } else if (pts && pts.length >= 2) {
+    packetPoints = simplifyRoutedPoints(pts);
     pathD = roundedPolylinePath(pts);
   } else {
+    packetPoints = [
+      { x: props.sourceX, y: props.sourceY },
+      { x: props.targetX, y: props.targetY },
+    ];
     pathD = `M ${props.sourceX} ${props.sourceY} L ${props.targetX} ${props.targetY}`;
   }
 
   const dotFill = strokeFromEdgeProps(props);
   const readJunction = data?.variableEdgeRole === 'read';
+  const traceFlow = data?.traceFlow;
+  const packetIndex = data?.tracePacketIndex ?? 0;
+  const packetPathId = svgIdFromEdgeId(props.id);
+  const packetRadius = traceFlow === 'active' ? 6 : 5;
+  const packetDuration = traceFlow === 'active' ? '1.25s' : '1.55s';
+  const packetDelay = `${-(packetIndex % 5) * 0.18}s`;
+  const staticPoint = midpoint(packetPoints);
 
   return (
     <Fragment>
@@ -124,6 +175,42 @@ function SkillOrthogonalEdge(props: EdgeProps) {
         markerStart={props.markerStart}
         interactionWidth={props.interactionWidth}
       />
+      {traceFlow ? (
+        <g
+          className={`skill-flow-packet-layer skill-flow-packet-layer--${traceFlow}`}
+          pointerEvents="none"
+          aria-hidden
+        >
+          <path id={packetPathId} d={pathD} className="skill-flow-packet-motion-path" />
+          <g className="skill-flow-packet skill-flow-packet--animated">
+            <animateMotion
+              dur={packetDuration}
+              begin={packetDelay}
+              repeatCount="indefinite"
+              rotate="auto"
+            >
+              <mpath href={`#${packetPathId}`} />
+            </animateMotion>
+            <circle r={packetRadius} fill={dotFill} className="skill-flow-packet__dot" />
+            <path
+              d={`M ${packetRadius + 2} 0 L ${Math.max(1.5, packetRadius - 2)} ${Math.max(2.5, packetRadius - 3)} L ${Math.max(1.5, packetRadius - 2)} ${-Math.max(2.5, packetRadius - 3)} Z`}
+              fill={dotFill}
+              className="skill-flow-packet__arrow"
+            />
+          </g>
+          <g
+            className="skill-flow-packet skill-flow-packet--static"
+            transform={`translate(${staticPoint.x} ${staticPoint.y})`}
+          >
+            <circle r={packetRadius} fill={dotFill} className="skill-flow-packet__dot" />
+            <path
+              d={`M ${packetRadius + 2} 0 L ${Math.max(1.5, packetRadius - 2)} ${Math.max(2.5, packetRadius - 3)} L ${Math.max(1.5, packetRadius - 2)} ${-Math.max(2.5, packetRadius - 3)} Z`}
+              fill={dotFill}
+              className="skill-flow-packet__arrow"
+            />
+          </g>
+        </g>
+      ) : null}
       {readJunction ? (
         <circle
           cx={props.sourceX}
