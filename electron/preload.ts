@@ -41,10 +41,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConfig: () => ipcRenderer.invoke('get-config'),
   getConfigPath: () => ipcRenderer.invoke('get-config-path'),
   saveConfig: (config: unknown) => ipcRenderer.invoke('save-config', config),
+  setupStatus: () => ipcRenderer.invoke('setup:status'),
+  setupSetMode: (mode: 'automatic' | 'manual') => ipcRenderer.invoke('setup:set-mode', mode),
+  setupInstallCodex: () => ipcRenderer.invoke('setup:installCodex'),
+  setupLoginCodex: (payload?: { deviceCode?: boolean }) => ipcRenderer.invoke('setup:loginCodex', payload),
+  setupVerifyCodex: () => ipcRenderer.invoke('setup:verifyCodex'),
+  setupOpenExternal: (url: string) => ipcRenderer.invoke('setup:openExternal', url),
+  onSetupLog: (cb: (payload: { message: string }) => void) => {
+    const listener = (_: unknown, payload: { message: string }) => cb(payload);
+    ipcRenderer.on('setup:log', listener);
+    return () => ipcRenderer.removeListener('setup:log', listener);
+  },
   showFolderPicker: (options?: { defaultPath?: string }) =>
     ipcRenderer.invoke('dialog:showFolderPicker', options),
   showAddFilesPicker: (options?: { defaultPath?: string }) =>
     ipcRenderer.invoke('dialog:showAddFiles', options),
+  showOpenFilePicker: (options?: { defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) =>
+    ipcRenderer.invoke('dialog:showOpenFile', options),
+  showSaveFilePicker: (options?: { defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) =>
+    ipcRenderer.invoke('dialog:showSaveFile', options),
   openEnvironment: (payload: { environmentId: string; name: string; rootPath: string }) =>
     ipcRenderer.send('open-environment', payload),
   closeLauncher: () => ipcRenderer.send('close-launcher'),
@@ -80,6 +95,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('fs:stat', payload),
   fsWriteFile: (payload: { filePath: string; content: string; workspaceRoot: string }) =>
     ipcRenderer.invoke('fs:writeFile', payload),
+  fsWriteAbsoluteFile: (payload: { filePath: string; content: string }) =>
+    ipcRenderer.invoke('fs:writeAbsoluteFile', payload),
   fsReadDir: (payload: { dirPath?: string; workspaceRoot: string }) =>
     ipcRenderer.invoke('fs:readDir', payload),
   fsMkdir: (payload: { dirPath: string; workspaceRoot: string }) =>

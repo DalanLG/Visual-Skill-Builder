@@ -64,6 +64,7 @@ function mergePlanMetadata(
     return {
       ...e,
       ui: {
+        ...(e.ui ?? {}),
         routeKind: ep.routeKind,
         visualEmphasis: ep.visualEmphasis,
         labelVisible: ep.labelVisible,

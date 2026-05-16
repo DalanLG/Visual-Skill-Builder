@@ -72,6 +72,8 @@ function installElectronMock(options?: { markdownByPath?: Map<string, string> })
     fsReadDir: vi.fn().mockResolvedValue([]),
     fsReadFile: vi.fn(async ({ filePath }: { filePath: string }) => markdownByPath.get(filePath) ?? ''),
     fsWriteFile: vi.fn().mockResolvedValue({ ok: true }),
+    fsWriteAbsoluteFile: vi.fn().mockResolvedValue({ ok: true }),
+    fsCopyIntoWorkspace: vi.fn().mockResolvedValue({ ok: true }),
     fsMkdir: vi.fn().mockResolvedValue({ ok: true }),
     fsUnlink: vi.fn().mockResolvedValue({ ok: true }),
     fsRmdir: vi.fn().mockResolvedValue({ ok: true }),
@@ -94,6 +96,9 @@ function installElectronMock(options?: { markdownByPath?: Map<string, string> })
     }),
     onAppLog: vi.fn(() => () => {}),
     onWorkspaceChange: vi.fn(() => () => {}),
+    showAddFilesPicker: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
+    showOpenFilePicker: vi.fn().mockResolvedValue(null),
+    showSaveFilePicker: vi.fn().mockResolvedValue('C:/exports/SKILL.md'),
     codexExec: vi.fn().mockResolvedValue({
       ok: true,
       stdout: JSON.stringify(generatedGraph('Generated Skill')),
@@ -124,6 +129,26 @@ describe('SkillsSetupPanel', () => {
     expect(screen.getByText(/No graph yet/i)).toBeTruthy();
   });
 
+  it('opens a Markdown file picker when selecting an import file', async () => {
+    const api = window.electronAPI!;
+    vi.mocked(api.showOpenFilePicker!).mockResolvedValueOnce('C:/Users/dalan/Downloads/source.md');
+    vi.mocked(api.fsExists).mockImplementation(async ({ filePath }) => ({
+      exists: filePath === '.visual-skill-builder/imports/source.md',
+    }));
+
+    render(<SkillsSetupPanel workspaceRoot={WORKSPACE_ROOT} projectRules="" />);
+    fireEvent.click(await screen.findByRole('button', { name: /select md file/i }));
+
+    await waitFor(() =>
+      expect(api.showOpenFilePicker).toHaveBeenCalledWith({
+        defaultPath: WORKSPACE_ROOT,
+        filters: [{ name: 'Markdown files', extensions: ['md', 'markdown'] }],
+      }),
+    );
+    expect(api.showAddFilesPicker).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText('.visual-skill-builder/imports/source.md')).toBeTruthy());
+  });
+
   it('creates and saves a graph from a prompt end to end', async () => {
     const api = window.electronAPI!;
     vi.mocked(api.codexExec).mockResolvedValueOnce({
@@ -145,7 +170,7 @@ describe('SkillsSetupPanel', () => {
         workspaceRoot: WORKSPACE_ROOT,
         model: 'gpt-5.4-mini',
         modelReasoningEffort: 'medium',
-        message: expect.stringContaining('You convert a user request into the canonical visual skill graph.'),
+        message: expect.stringContaining('SkillFlowGraphV3'),
       }),
     );
     await waitFor(() =>
@@ -198,7 +223,7 @@ describe('SkillsSetupPanel', () => {
         workspaceRoot: WORKSPACE_ROOT,
         model: 'gpt-5.4',
         modelReasoningEffort: 'medium',
-        message: expect.stringContaining('You convert a skill specification into the canonical visual skill graph.'),
+        message: expect.stringContaining('You convert a Markdown skill document into the canonical editable graph SkillFlowGraphV3.'),
       }),
     );
     await waitFor(() =>
@@ -210,5 +235,58 @@ describe('SkillsSetupPanel', () => {
       ),
     );
     expect((await screen.findAllByText(/Import finished: Pasted Markdown Skill/i)).length).toBeGreaterThan(0);
+  });
+
+  it('exports a saved graph as optimized Markdown to a chosen file', async () => {
+    installElectronMock();
+    const api = window.electronAPI!;
+    const savedGraph = generatedGraph('Saved Skill');
+    vi.mocked(api.fsExists).mockImplementation(async ({ filePath }) => ({
+      exists: filePath === '.codex/skills' || filePath === '.codex/skills/saved-skill/skill.graph.json',
+    }));
+    vi.mocked(api.fsReadDir).mockResolvedValueOnce([{ name: 'saved-skill', isFile: false }]);
+    vi.mocked(api.fsReadFile).mockImplementation(async ({ filePath }) =>
+      filePath === '.codex/skills/saved-skill/skill.graph.json' ? JSON.stringify(savedGraph) : '',
+    );
+    vi.mocked(api.codexExec).mockResolvedValueOnce({
+      ok: true,
+      stdout: [
+        '---',
+        'name: "Saved Skill"',
+        'description: "Optimized exported skill."',
+        '---',
+        '',
+        '# Saved Skill',
+        '',
+        '## Variables / Artifacts',
+        '',
+        '- No reusable artifacts are declared yet.',
+        '',
+        '## Workflow',
+        '',
+        '- Analyze the request.',
+      ].join('\n'),
+      stderr: '',
+    });
+
+    render(<SkillsSetupPanel workspaceRoot={WORKSPACE_ROOT} projectRules="" />);
+
+    const exportButton = await screen.findByRole('button', { name: /export md/i });
+    fireEvent.click(exportButton);
+
+    await waitFor(() => expect(api.showSaveFilePicker).toHaveBeenCalledTimes(1));
+    expect(api.showSaveFilePicker).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultPath: 'X:/fixture-workspace/saved-skill-SKILL.md',
+      }),
+    );
+    await waitFor(() =>
+      expect(api.fsWriteAbsoluteFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filePath: 'C:/exports/SKILL.md',
+          content: expect.stringContaining('## Workflow'),
+        }),
+      ),
+    );
   });
 });

@@ -2,6 +2,9 @@ node_modules/
 dist/
 dist-electron/
 release/
+Builds/
+*.exe
+*.blockmap
 *.log
 .DS_Store
 codex-interface.config.json

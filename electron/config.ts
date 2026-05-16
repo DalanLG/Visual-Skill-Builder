@@ -18,6 +18,11 @@ export interface ConfigDefaults {
 export interface CodexInterfaceConfig {
   environments: Environment[];
   defaults: ConfigDefaults;
+  setupMode?: 'automatic' | 'manual';
+  setupCompletedAt?: string;
+  codexInstallDir?: string;
+  codexVersion?: string;
+  lastSetupStatus?: unknown;
 }
 
 const CONFIG_FILENAME = 'visual-skill-builder.config.json';
@@ -65,5 +70,6 @@ export function loadConfig(): CodexInterfaceConfig {
 
 export function saveConfig(config: CodexInterfaceConfig): void {
   const configPath = getConfigPath();
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 }

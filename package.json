@@ -53,6 +53,7 @@
   "build": {
     "appId": "dev.visualskillbuilder.demo",
     "productName": "Visual Skill Builder",
+    "icon": "build/icon.ico",
     "directories": {
       "output": "release"
     },
@@ -61,6 +62,7 @@
       "dist-electron/**"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ]

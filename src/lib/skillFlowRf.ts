@@ -1,10 +1,11 @@
 import { MarkerType, type Edge, type EdgeMarker, type Node } from '@xyflow/react';
 import { SKILL_LAYOUT_SPACING } from './skillFlowLayoutSpacing';
 import { isSkillLayoutPlanV2, type SkillDataArtifactLayoutNode } from './skillFlowLayoutPlanV2';
-import type { SkillEdgeKind, SkillFlowGraphV2, SkillGroupV2, SkillNodeV2 } from './skillFlowGraphV2';
+import type { SkillEdgeV2, SkillFlowGraphV2, SkillGroupV2, SkillNodeV2 } from './skillFlowGraphV2';
 import type { SkillLayoutGroup } from './skillFlowLayoutPlan';
 import type { SkillValidationIssue } from './skillFlowValidation';
 import {
+  RESPONSE_EDGE_STROKE,
   resolveEdgeVisual,
   strokeForSvgMarker,
   VARIABLE_READ_EDGE_STROKE,
@@ -63,21 +64,6 @@ export type SkillFlowRfNodeData = {
 export type SkillGroupRfData =
   | { variant: 'layout'; group: SkillLayoutGroup; nodeCount: number }
   | { variant: 'user'; userGroup: SkillGroupV2; nodeCount: number };
-
-function edgeStroke(kind: SkillEdgeKind): { stroke: string; strokeDasharray?: string } {
-  switch (kind) {
-    case 'sequence':
-      return { stroke: 'var(--accent, #6ea8fe)' };
-    case 'depends_on':
-      return { stroke: '#9aa8ff', strokeDasharray: '6 4' };
-    case 'branch':
-      return { stroke: '#c9a227', strokeDasharray: '2 4' };
-    case 'parallel':
-      return { stroke: '#7bdc9c', strokeDasharray: '4 2' };
-    default:
-      return { stroke: 'var(--border, #444)' };
-  }
-}
 
 function issuesForNode(nodeId: string, map: Map<string, SkillValidationIssue[]>): SkillValidationIssue[] {
   return map.get(nodeId) ?? [];
@@ -295,11 +281,28 @@ const TARGET_FAN_IN_STEP = 26;
 
 const ARROW_MARKER = { width: 26, height: 26 } as const;
 
+function edgeWithResponseVisualMetadata(edge: SkillEdgeV2, target: SkillNodeV2 | undefined): SkillEdgeV2 {
+  if (target?.kind !== 'response') return edge;
+  return {
+    ...edge,
+    ui: {
+      ...(edge.ui ?? {}),
+      layoutColorKey: 'response',
+      visualEmphasis: 'primary',
+      labelVisible: edge.ui?.labelVisible ?? true,
+    },
+  };
+}
+
 /** Stroke for layout-only variable bus edges (producer → variable → consumer). */
 type VariableEdgeSpec = { id: string; source: string; target: string; role: 'write' | 'read' };
 
 const variableEdgeStrokeForRole = (role: VariableEdgeSpec['role']): string =>
   role === 'write' ? VARIABLE_WRITE_EDGE_STROKE : VARIABLE_READ_EDGE_STROKE;
+
+function variableEdgeStrokeForTarget(role: VariableEdgeSpec['role'], target: SkillNodeV2 | undefined): string {
+  return target?.kind === 'response' ? RESPONSE_EDGE_STROKE : variableEdgeStrokeForRole(role);
+}
 
 function stubSkillNodeFromArtifactRect(
   id: string,
@@ -687,9 +690,10 @@ export function skillGraphToReactFlow(
   const settledPathMap =
     plan && rawPaths.size > 0 ? nudgeSeparatedOrthogonalPaths(rawPaths) : rawPaths;
 
-  const graphRfEdges: Edge[] = graph.edges.map((e) => {
-    const s = byId.get(e.source);
-    const t = byId.get(e.target);
+  const graphRfEdges: Edge[] = graph.edges.map((edge) => {
+    const s = byId.get(edge.source);
+    const t = byId.get(edge.target);
+    const e = edgeWithResponseVisualMetadata(edge, t);
     const fanStagger = fanInTyDelta.get(e.id) ?? 0;
     const assign = useOrthogonalLanes
       ? orthogonalLaneMap.get(e.id) ?? { laneIndex: 0, peersInBucket: 1 }
@@ -715,60 +719,10 @@ export function skillGraphToReactFlow(
       });
     }
 
-    if (plan) {
-      const rv = resolveEdgeVisual(e, plan, {
-        selectedNodeId: selectedId,
-        fadeUnrelated: fade,
-      });
-      if (!s || !t || !anchors) {
-        return {
-          id: e.id,
-          type: SKILL_ORTHOGONAL_EDGE_RF_TYPE,
-          source: e.source,
-          target: e.target,
-          sourceHandle: SKILL_FLOW_HANDLE_SRC.R,
-          targetHandle: SKILL_FLOW_HANDLE_TGT.L,
-          label: e.label?.trim() || undefined,
-          style: {
-            stroke: rv.stroke,
-            strokeWidth: Math.max(rv.strokeWidth, 2.6),
-            strokeDasharray: rv.strokeDasharray,
-            opacity: rv.opacity,
-          },
-          markerEnd: skillArrowMarker(rv.stroke, e.id),
-          data: {
-            renderMode: 'settled' as const,
-            routingPrimary: 'horizontal' as const,
-            laneMidOffset: 0,
-          },
-        };
-      }
-      return {
-        id: e.id,
-        type: SKILL_ORTHOGONAL_EDGE_RF_TYPE,
-        source: e.source,
-        target: e.target,
-        sourceHandle: anchors.sourceHandle,
-        targetHandle: anchors.targetHandle,
-        label: e.label?.trim() || undefined,
-        animated: false,
-        style: {
-          stroke: rv.stroke,
-          strokeWidth: Math.max(rv.strokeWidth, 2.6),
-          strokeDasharray: rv.strokeDasharray,
-          opacity: rv.opacity,
-        },
-        markerEnd: skillArrowMarker(rv.stroke, e.id),
-        data: {
-          points,
-          renderMode: 'settled' as const,
-          laneMidOffset: laneOffset,
-          routingPrimary: anchors.primary,
-        },
-      };
-    }
-
-    const es = edgeStroke(e.kind);
+    const rv = resolveEdgeVisual(e, plan, {
+      selectedNodeId: selectedId,
+      fadeUnrelated: fade,
+    });
     if (!s || !t || !anchors) {
       return {
         id: e.id,
@@ -779,8 +733,13 @@ export function skillGraphToReactFlow(
         targetHandle: SKILL_FLOW_HANDLE_TGT.L,
         label: e.label?.trim() || undefined,
         animated: false,
-        style: { ...es, strokeWidth: 2 },
-        markerEnd: skillArrowMarker(typeof es.stroke === 'string' ? es.stroke : undefined, e.id),
+        style: {
+          stroke: rv.stroke,
+          strokeWidth: Math.max(rv.strokeWidth, 2.6),
+          strokeDasharray: rv.strokeDasharray,
+          opacity: rv.opacity,
+        },
+        markerEnd: skillArrowMarker(rv.stroke, e.id),
         data: {
           renderMode: 'settled' as const,
           routingPrimary: 'horizontal' as const,
@@ -788,7 +747,6 @@ export function skillGraphToReactFlow(
         },
       };
     }
-
     return {
       id: e.id,
       type: SKILL_ORTHOGONAL_EDGE_RF_TYPE,
@@ -798,8 +756,13 @@ export function skillGraphToReactFlow(
       targetHandle: anchors.targetHandle,
       label: e.label?.trim() || undefined,
       animated: false,
-      style: { ...es, strokeWidth: 2 },
-      markerEnd: skillArrowMarker(typeof es.stroke === 'string' ? es.stroke : undefined, e.id),
+      style: {
+        stroke: rv.stroke,
+        strokeWidth: Math.max(rv.strokeWidth, 2.6),
+        strokeDasharray: rv.strokeDasharray,
+        opacity: rv.opacity,
+      },
+      markerEnd: skillArrowMarker(rv.stroke, e.id),
       data: {
         points,
         renderMode: 'settled' as const,
@@ -836,9 +799,15 @@ export function skillGraphToReactFlow(
       });
     }
 
+    const targetNode = byId.get(vs.target);
+    const isWrite = vs.role === 'write';
+    const isResponseTarget = targetNode?.kind === 'response';
+    const stroke = variableEdgeStrokeForTarget(vs.role, targetNode);
+    const strokeWidth = isResponseTarget ? 3.35 : isWrite ? 2.8 : 2.5;
+    const strokeDasharray = isResponseTarget ? undefined : isWrite ? '3 5' : undefined;
+    const opacity = isResponseTarget ? 1 : 0.95;
+
     if (!s || !t || !anchors) {
-      const isWrite = vs.role === 'write';
-      const stroke = variableEdgeStrokeForRole(vs.role);
       return {
         id: vs.id,
         type: SKILL_ORTHOGONAL_EDGE_RF_TYPE,
@@ -848,9 +817,9 @@ export function skillGraphToReactFlow(
         targetHandle: SKILL_FLOW_HANDLE_TGT.L,
         style: {
           stroke,
-          strokeWidth: isWrite ? 2.8 : 2.5,
-          ...(isWrite ? { strokeDasharray: '3 5' } : {}),
-          opacity: 0.95,
+          strokeWidth,
+          ...(strokeDasharray ? { strokeDasharray } : {}),
+          opacity,
         },
         markerEnd: skillArrowMarker(stroke, vs.id),
         data: {
@@ -862,8 +831,6 @@ export function skillGraphToReactFlow(
       };
     }
 
-    const isWrite = vs.role === 'write';
-    const stroke = variableEdgeStrokeForRole(vs.role);
     return {
       id: vs.id,
       type: SKILL_ORTHOGONAL_EDGE_RF_TYPE,
@@ -873,9 +840,9 @@ export function skillGraphToReactFlow(
       targetHandle: anchors.targetHandle,
       style: {
         stroke,
-        strokeWidth: isWrite ? 2.8 : 2.5,
-        ...(isWrite ? { strokeDasharray: '3 5' } : {}),
-        opacity: 0.95,
+        strokeWidth,
+        ...(strokeDasharray ? { strokeDasharray } : {}),
+        opacity,
       },
       markerEnd: skillArrowMarker(stroke, vs.id),
       data: {

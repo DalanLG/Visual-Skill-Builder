@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { VisualSkillBuilderConfig } from '../vite-env.d';
 
 function envIdFromPath(rootPath: string): string {
@@ -6,6 +7,7 @@ function envIdFromPath(rootPath: string): string {
 }
 
 export default function Launcher() {
+  const navigate = useNavigate();
   const [config, setConfig] = useState<VisualSkillBuilderConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -15,6 +17,11 @@ export default function Launcher() {
     setError('');
     try {
       const c = window.electronAPI ? await window.electronAPI.getConfig() : null;
+      const setup = await window.electronAPI?.setupStatus?.();
+      if (setup && !setup.setupComplete) {
+        navigate('/setup', { replace: true });
+        return;
+      }
       setConfig(c);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -46,6 +53,11 @@ export default function Launcher() {
         defaultCodexModel: config?.defaults?.defaultCodexModel || 'gpt-5.4',
         defaultCodexReasoningEffort: config?.defaults?.defaultCodexReasoningEffort || 'medium',
       },
+      setupMode: config?.setupMode,
+      setupCompletedAt: config?.setupCompletedAt,
+      codexInstallDir: config?.codexInstallDir,
+      codexVersion: config?.codexVersion,
+      lastSetupStatus: config?.lastSetupStatus,
     };
     await window.electronAPI?.saveConfig(next);
     window.electronAPI?.openEnvironment({ environmentId: next.environments[0].id, name, rootPath: clean });

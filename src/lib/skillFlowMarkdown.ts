@@ -46,6 +46,16 @@ export function graphToSkillMarkdown(input: SkillFlowGraphV2): string {
   lines.push('');
   lines.push(description);
   lines.push('');
+  lines.push('## Use when');
+  lines.push('');
+  lines.push(`- The user asks to run, edit, or reuse the ${graph.name} workflow.`);
+  lines.push('- The task needs the workflow stages, artifacts, checks, and final response behavior encoded in this skill.');
+  lines.push('');
+  lines.push("## Don't use when");
+  lines.push('');
+  lines.push('- The user only needs a one-off answer and not this reusable workflow.');
+  lines.push('- Required inputs are missing and the workflow has no safe missing-data behavior.');
+  lines.push('');
 
   const variables = graph.nodes
     .filter((n) => n.kind === 'variable' && n.variable?.exportBehavior !== 'visual-only')
@@ -66,6 +76,10 @@ export function graphToSkillMarkdown(input: SkillFlowGraphV2): string {
       lines.push(`- Artifact kind: ${v.artifactKind ?? 'custom'}`);
       lines.push(`- Storage: ${v.storage ?? 'workspace-file'}`);
       if (v.pathTemplate) lines.push(`- Path template: \`${v.pathTemplate}\``);
+      if (variableNode.artifactSpec) {
+        lines.push(`- Reference style: ${variableNode.artifactSpec.referenceStyle}`);
+        lines.push(`- Retention: ${variableNode.artifactSpec.retention.scope} / ${variableNode.artifactSpec.retention.cleanup}`);
+      }
       if (v.description) lines.push(`- Description: ${v.description}`);
       const producers = (v.producedBy ?? []).map((id) => nodeLabel(graph, id));
       const consumers = (v.consumedBy ?? []).map((id) => nodeLabel(graph, id));
@@ -171,6 +185,18 @@ export function graphToSkillMarkdown(input: SkillFlowGraphV2): string {
     lines.push('## Final Response');
     lines.push('');
     lines.push(response.contract?.purpose ?? response.summary ?? 'Compose the final AI response for the user.');
+    if (response.responseSpec) {
+      lines.push('');
+      lines.push('Response contract:');
+      lines.push(`- Audience: ${response.responseSpec.audience}`);
+      lines.push(`- Format: ${response.responseSpec.format}`);
+      lines.push(`- Missing data: ${response.responseSpec.missingDataBehavior}`);
+      lines.push(`- Evidence: ${response.responseSpec.mustNotClaimWithoutEvidence ? 'do not claim success without evidence' : 'best effort allowed'}`);
+      lines.push(`- Tone: ${response.responseSpec.tone}`);
+      if (response.responseSpec.mustMentionArtifacts.length) {
+        lines.push(`- Must mention artifacts: ${response.responseSpec.mustMentionArtifacts.join(', ')}`);
+      }
+    }
     if (response.contract?.instructions?.length) {
       lines.push('');
       lines.push('Response instructions:');

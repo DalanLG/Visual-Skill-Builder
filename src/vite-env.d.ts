@@ -4,8 +4,23 @@ interface ElectronAPI {
   getConfig: () => Promise<VisualSkillBuilderConfig>;
   getConfigPath: () => Promise<string>;
   saveConfig: (config: VisualSkillBuilderConfig) => Promise<VisualSkillBuilderConfig>;
+  setupStatus?: () => Promise<SetupStatus>;
+  setupSetMode?: (mode: 'automatic' | 'manual') => Promise<SetupStatus>;
+  setupInstallCodex?: () => Promise<SetupActionResult>;
+  setupLoginCodex?: (payload?: { deviceCode?: boolean }) => Promise<SetupActionResult>;
+  setupVerifyCodex?: () => Promise<SetupActionResult>;
+  setupOpenExternal?: (url: string) => Promise<SetupActionResult>;
+  onSetupLog?: (cb: (payload: { message: string }) => void) => (() => void) | void;
   showFolderPicker?: (options?: { defaultPath?: string }) => Promise<string | null>;
   showAddFilesPicker?: (options?: { defaultPath?: string }) => Promise<{ canceled: boolean; filePaths: string[] }>;
+  showOpenFilePicker?: (options?: {
+    defaultPath?: string;
+    filters?: { name: string; extensions: string[] }[];
+  }) => Promise<string | null>;
+  showSaveFilePicker?: (options?: {
+    defaultPath?: string;
+    filters?: { name: string; extensions: string[] }[];
+  }) => Promise<string | null>;
   openEnvironment: (p: { environmentId: string; name: string; rootPath: string }) => void;
   closeLauncher: () => void;
   getEnvContext: () => Promise<{ environmentId: string; envName: string; rootPath: string } | null>;
@@ -31,6 +46,7 @@ interface ElectronAPI {
     | { ok: false; error: string }
   >;
   fsWriteFile: (p: { filePath: string; content: string; workspaceRoot: string }) => Promise<{ ok: boolean }>;
+  fsWriteAbsoluteFile?: (p: { filePath: string; content: string }) => Promise<{ ok: boolean }>;
   fsReadDir: (p: { dirPath?: string; workspaceRoot: string }) => Promise<{ name: string; isFile: boolean }[]>;
   fsMkdir: (p: { dirPath: string; workspaceRoot: string }) => Promise<{ ok: boolean }>;
   fsUnlink: (p: { filePath: string; workspaceRoot: string }) => Promise<{ ok: boolean }>;
@@ -55,7 +71,38 @@ export interface VisualSkillBuilderConfig {
     defaultCodexModel?: string;
     defaultCodexReasoningEffort?: string;
   };
+  setupMode?: 'automatic' | 'manual';
+  setupCompletedAt?: string;
+  codexInstallDir?: string;
+  codexVersion?: string;
+  lastSetupStatus?: unknown;
 }
+
+export interface SetupCheck {
+  status: 'ok' | 'missing' | 'error' | 'unknown';
+  label: string;
+  detail?: string;
+  path?: string;
+}
+
+export interface SetupStatus {
+  node: SetupCheck;
+  npm: SetupCheck;
+  codex: SetupCheck;
+  auth: SetupCheck;
+  workspace: SetupCheck;
+  smokeTest: SetupCheck;
+  appManagedCodexDir: string;
+  appManagedCodexPath?: string;
+  setupComplete: boolean;
+  setupMode: 'automatic' | 'manual';
+  completedAt?: string;
+  diagnostics: string[];
+}
+
+export type SetupActionResult =
+  | { ok: true; status?: SetupStatus }
+  | { ok: false; error: string; status?: SetupStatus };
 
 declare global {
   interface Window {

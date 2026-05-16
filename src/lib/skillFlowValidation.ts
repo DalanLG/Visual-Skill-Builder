@@ -60,6 +60,25 @@ function hasCycle(nodeIds: Set<string>, edges: SkillEdgeV2[]): boolean {
   return false;
 }
 
+function reachableFrom(startIds: string[], nodeIds: Set<string>, edges: SkillEdgeV2[]): Set<string> {
+  const out = new Map<string, string[]>();
+  for (const id of nodeIds) out.set(id, []);
+  for (const edge of edges) {
+    if (nodeIds.has(edge.source) && nodeIds.has(edge.target)) {
+      out.get(edge.source)!.push(edge.target);
+    }
+  }
+  const seen = new Set<string>();
+  const stack = startIds.filter((id) => nodeIds.has(id));
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const next of out.get(id) ?? []) stack.push(next);
+  }
+  return seen;
+}
+
 export function validateSkillFlowGraphV2(graph: SkillFlowGraphV2): SkillValidationResult {
   const issues: SkillValidationIssue[] = [];
   const nodeIds = new Set<string>();
@@ -214,14 +233,14 @@ export function validateSkillFlowGraphV2(graph: SkillFlowGraphV2): SkillValidati
   const responseNodes = graph.nodes.filter((n) => n.kind === 'response');
   if (responseNodes.length === 0) {
     issues.push({
-      severity: 'warn',
+      severity: 'error',
       code: 'response_missing',
       message: 'Graph should have one Response node where final outputs converge',
     });
   } else if (responseNodes.length > 1) {
     for (const n of responseNodes) {
       issues.push({
-        severity: 'warn',
+        severity: 'error',
         code: 'response_duplicate',
         message: 'Graph should have exactly one Response node',
         nodeId: n.id,
@@ -231,7 +250,7 @@ export function validateSkillFlowGraphV2(graph: SkillFlowGraphV2): SkillValidati
     const incoming = graph.edges.some((e) => e.target === responseNodes[0].id);
     if (!incoming) {
       issues.push({
-        severity: 'warn',
+        severity: 'error',
         code: 'response_no_incoming',
         message: 'Response node has no incoming edge',
         nodeId: responseNodes[0].id,
@@ -240,7 +259,7 @@ export function validateSkillFlowGraphV2(graph: SkillFlowGraphV2): SkillValidati
     const outgoing = graph.edges.filter((e) => e.source === responseNodes[0].id);
     if (outgoing.length) {
       issues.push({
-        severity: 'warn',
+        severity: 'error',
         code: 'response_has_outgoing',
         message: 'Response should be the final terminal node and have no outgoing edges',
         nodeId: responseNodes[0].id,
@@ -256,10 +275,18 @@ export function validateSkillFlowGraphV2(graph: SkillFlowGraphV2): SkillValidati
     });
     if (terminalBypass) {
       issues.push({
-        severity: 'warn',
+        severity: 'error',
         code: 'terminal_node_bypasses_response',
         message: `${terminalBypass.label} is terminal but does not feed Response`,
         nodeId: terminalBypass.id,
+      });
+    }
+    if (!responseNodes[0].responseSpec) {
+      issues.push({
+        severity: 'warn',
+        code: 'response_missing_spec',
+        message: 'Response node should declare responseSpec for final answer behavior',
+        nodeId: responseNodes[0].id,
       });
     }
   }
@@ -269,11 +296,31 @@ export function validateSkillFlowGraphV2(graph: SkillFlowGraphV2): SkillValidati
     const out = graph.edges.filter((e) => e.source === n.id);
     if (!out.length) {
       issues.push({
-        severity: 'warn',
+        severity: 'error',
         code: 'decision_no_outgoing',
         message: 'Decision node has no outgoing edges',
         nodeId: n.id,
       });
+    } else {
+      const branches = out.filter((e) => e.kind === 'branch' || e.ui?.semanticKind === 'branch');
+      if (branches.length < 2) {
+        issues.push({
+          severity: 'warn',
+          code: 'decision_branch_count',
+          message: 'Decision nodes should have at least two explicit branch edges',
+          nodeId: n.id,
+        });
+      }
+      const hasDefault = branches.some((e) => /\b(default|else|fallback)\b/i.test(e.label ?? ''));
+      const allLabeled = branches.every((e) => Boolean(e.label?.trim()));
+      if (branches.length && (!allLabeled || (!hasDefault && branches.length < 2))) {
+        issues.push({
+          severity: 'warn',
+          code: 'decision_branch_conditions',
+          message: 'Decision branch edges should be labeled with conditions and include a default when coverage is not exhaustive',
+          nodeId: n.id,
+        });
+      }
     }
   }
 
@@ -320,7 +367,7 @@ export function validateSkillFlowGraphV2(graph: SkillFlowGraphV2): SkillValidati
     const target = graph.nodes.find((n) => n.id === e.target);
     if (e.ui?.semanticKind === 'data_write' && target?.kind !== 'variable') {
       issues.push({
-        severity: 'warn',
+        severity: 'error',
         code: 'data_write_target_not_variable',
         message: 'data_write edges should target variable artifact nodes',
         edgeId: e.id,
@@ -328,11 +375,101 @@ export function validateSkillFlowGraphV2(graph: SkillFlowGraphV2): SkillValidati
     }
     if (e.ui?.semanticKind === 'data_read' && source?.kind !== 'variable') {
       issues.push({
-        severity: 'warn',
+        severity: 'error',
         code: 'data_read_source_not_variable',
         message: 'data_read edges should source from variable artifact nodes',
         edgeId: e.id,
       });
+    }
+  }
+
+  const variableByName = new Map<string, SkillNodeV2>();
+  for (const node of graph.nodes) {
+    if (node.kind === 'variable' && node.variable?.variableName) {
+      variableByName.set(node.variable.variableName, node);
+    }
+  }
+  for (const node of graph.nodes) {
+    if (node.kind === 'variable') continue;
+    for (const read of node.contract?.reads ?? node.variableReads ?? []) {
+      const variable = variableByName.get(read);
+      if (!variable) {
+        issues.push({
+          severity: 'error',
+          code: 'contract_read_missing_artifact',
+          message: `Node reads ${read} but no matching variable artifact exists`,
+          nodeId: node.id,
+        });
+        continue;
+      }
+      const hasEdge = graph.edges.some((e) => e.source === variable.id && e.target === node.id && e.ui?.semanticKind === 'data_read');
+      if (!hasEdge) {
+        issues.push({
+          severity: 'error',
+          code: 'contract_read_edge_missing',
+          message: `Node reads ${read} but lacks a matching data_read edge`,
+          nodeId: node.id,
+        });
+      }
+    }
+    for (const write of node.contract?.writes ?? node.variableWrites ?? []) {
+      const variable = variableByName.get(write);
+      if (!variable) {
+        issues.push({
+          severity: 'error',
+          code: 'contract_write_missing_artifact',
+          message: `Node writes ${write} but no matching variable artifact exists`,
+          nodeId: node.id,
+        });
+        continue;
+      }
+      const hasEdge = graph.edges.some((e) => e.source === node.id && e.target === variable.id && e.ui?.semanticKind === 'data_write');
+      if (!hasEdge) {
+        issues.push({
+          severity: 'error',
+          code: 'contract_write_edge_missing',
+          message: `Node writes ${write} but lacks a matching data_write edge`,
+          nodeId: node.id,
+        });
+      }
+    }
+  }
+
+  const entryCandidates = graph.nodes
+    .filter((n) => n.kind !== 'variable' && n.kind !== 'group' && n.kind !== 'note' && n.kind !== 'response')
+    .filter((n) => !graph.edges.some((e) => e.target === n.id && e.ui?.semanticKind !== 'data_read'));
+  const entryIds = entryCandidates.length ? entryCandidates.map((n) => n.id) : graph.nodes.slice(0, 1).map((n) => n.id);
+  const reachable = reachableFrom(entryIds, nodeIds, graph.edges);
+  for (const node of graph.nodes) {
+    if (node.kind === 'group' || node.kind === 'note') continue;
+    if (!reachable.has(node.id)) {
+      issues.push({
+        severity: 'error',
+        code: 'node_unreachable',
+        message: `${node.label} is not reachable from the graph entry`,
+        nodeId: node.id,
+      });
+    }
+  }
+
+  const parallelSources = graph.edges.filter((e) => e.kind === 'parallel' || e.ui?.semanticKind === 'parallel');
+  const forkIds = new Set(parallelSources.map((e) => e.source));
+  for (const forkId of forkIds) {
+    const out = parallelSources.filter((e) => e.source === forkId);
+    if (out.length > 1) {
+      const targets = new Set(out.map((e) => e.target));
+      const hasJoin = graph.nodes.some((n) => {
+        const incoming = graph.edges.filter((e) => targets.has(e.source) && e.target === n.id);
+        return incoming.length >= 2;
+      });
+      if (!hasJoin) {
+        issues.push({
+          severity: 'warn',
+          code: 'parallel_missing_join',
+          message: 'Parallel branches should reconverge through an explicit join or shared downstream node',
+          nodeId: forkId,
+        });
+      }
     }
   }
 

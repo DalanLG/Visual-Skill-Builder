@@ -94,6 +94,49 @@ export function normalizeVariableMeta(
   };
 }
 
+function variableMetaToArtifactSpec(variable: SkillVariableMeta, nodeId: string): NonNullable<SkillNodeV2['artifactSpec']> {
+  const storage = variable.storage === 'in-memory' ? 'memory' : 'workspace_file';
+  return {
+    variableName: variable.variableName,
+    label: variable.label ?? humanizeVariableName(variable.variableName),
+    dataType: variable.dataType ?? 'unknown',
+    artifactKind: variable.artifactKind === 'output-draft' ? 'output' : 'intermediate',
+    cardinality: variable.dataType === 'list' ? 'many' : 'one',
+    storage,
+    pathTemplate: variable.pathTemplate ?? null,
+    referenceStyle: storage === 'workspace_file' ? 'path' : 'inline',
+    retention: {
+      scope: storage === 'workspace_file' ? 'saved_skill' : 'turn',
+      cleanup: 'none',
+    },
+    schemaRef: null,
+    exampleValue: variable.sampleValue ?? null,
+    provenance: {
+      generatedBy: variable.producedBy ?? [],
+      usedBy: variable.consumedBy ?? [],
+      derivedFrom: [nodeId],
+    },
+    exportBehavior: {
+      includeInSkillMd: variable.exportBehavior !== 'visual-only',
+      exposeToAgent: variable.exportBehavior !== 'visual-only',
+      exposeToUser: false,
+    },
+  };
+}
+
+function defaultResponseSpec(): NonNullable<SkillNodeV2['responseSpec']> {
+  return {
+    audience: 'user',
+    format: 'markdown',
+    mustMentionArtifacts: [],
+    mustNotClaimWithoutEvidence: true,
+    missingDataBehavior: 'state_missing',
+    tone: 'direct, concise, operational',
+    requiredSections: [],
+    citationPolicy: 'artifact_only',
+  };
+}
+
 function labelForKind(kind: SkillNodeKind): string {
   switch (kind) {
     case 'goal':
@@ -282,6 +325,8 @@ export function canonicalizeSkillNode(node: SkillNodeV2): SkillNodeV2 {
     body: node.body?.trim() || contractToBody(contract),
     contract,
     ...(variable ? { variable } : { variable: undefined }),
+    ...(variable ? { artifactSpec: node.artifactSpec ?? variableMetaToArtifactSpec(variable, node.id) } : {}),
+    ...(node.kind === 'response' ? { responseSpec: node.responseSpec ?? defaultResponseSpec() } : {}),
     variableReads: variableReads.length ? variableReads : undefined,
     variableWrites: variableWrites.length ? variableWrites : undefined,
   };

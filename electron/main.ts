@@ -3,6 +3,7 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
 import { loadConfig, getConfigPath, saveConfig } from './config';
 import { registerSkillBuilderHandlers } from './skillBuilderHandlers';
+import { registerSetupHandlers } from './setupHandlers';
 
 let mainWindow: BrowserWindow | null = null;
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -92,6 +93,7 @@ function createEnvironmentWindow(environmentId: string, envName: string, rootPat
 
 app.whenReady().then(() => {
   registerSkillBuilderHandlers();
+  registerSetupHandlers();
 
   ipcMain.handle('get-config', () => loadConfig());
   ipcMain.handle('get-config-path', () => getConfigPath());
@@ -116,6 +118,27 @@ app.whenReady().then(() => {
     };
     const { canceled, filePaths } = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
     return { canceled, filePaths: filePaths || [] };
+  });
+
+  ipcMain.handle('dialog:showOpenFile', async (e, options?: { defaultPath?: string; filters?: Electron.FileFilter[] }) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile'],
+      defaultPath: options?.defaultPath,
+      filters: options?.filters ?? [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+    };
+    const { canceled, filePaths } = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return canceled || filePaths.length === 0 ? null : filePaths[0];
+  });
+
+  ipcMain.handle('dialog:showSaveFile', async (e, options?: { defaultPath?: string; filters?: Electron.FileFilter[] }) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const opts: Electron.SaveDialogOptions = {
+      defaultPath: options?.defaultPath,
+      filters: options?.filters ?? [{ name: 'Markdown', extensions: ['md'] }],
+    };
+    const { canceled, filePath } = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts);
+    return canceled || !filePath ? null : filePath;
   });
 
   ipcMain.on('open-environment', (_e, { environmentId, name, rootPath }) => {

@@ -38,7 +38,13 @@ import {
   validateCompiledSkillMarkdown,
 } from '../../lib/skillFlowPromptsV2';
 import { SKILL_FLOW_RF_TYPE, SKILL_GROUP_RF_TYPE, SKILL_ARTIFACT_RF_TYPE } from '../../lib/skillFlowRf';
-import { normalizeSkillFlowGraphAny, parseSkillFlowGraphAnyFromStdout, type SkillFlowGraphV2, type SkillNodeKind } from '../../lib/skillFlowGraphV2';
+import {
+  normalizeSkillFlowGraphAny,
+  parseSkillFlowGraphAnyFromStdout,
+  skillFlowGraphV2ToV3,
+  type SkillFlowGraphV2,
+  type SkillNodeKind,
+} from '../../lib/skillFlowGraphV2';
 import { type SkillValidationIssue, validateSkillFlowGraphV2 } from '../../lib/skillFlowValidation';
 import { validateSkillLayoutPlan } from '../../lib/skillFlowLayoutValidation';
 import SkillGenerationLogDrawer, { type SkillGenerationLogEntry } from './SkillGenerationLogDrawer';
@@ -604,17 +610,28 @@ function SkillsSetupInner({
 
   const pickMdFile = useCallback(async (): Promise<string | null> => {
     const api = window.electronAPI;
-    if (!api?.showAddFilesPicker || !api.fsCopyIntoWorkspace || !api.fsMkdir) return null;
-    const { canceled, filePaths } = await api.showAddFilesPicker({ defaultPath: workspaceRoot });
-    if (canceled || !filePaths.length) return null;
+    if (!api?.fsCopyIntoWorkspace || !api.fsMkdir) return null;
+    const pickedPath = api.showOpenFilePicker
+      ? await api.showOpenFilePicker({
+          defaultPath: workspaceRoot,
+          filters: [{ name: 'Markdown files', extensions: ['md', 'markdown'] }],
+        })
+      : api.showAddFilesPicker
+        ? (await api.showAddFilesPicker({ defaultPath: workspaceRoot })).filePaths[0] ?? null
+        : null;
+    if (!pickedPath) return null;
+    if (!/\.(md|markdown)$/i.test(pickedPath)) {
+      setErr('Pick a Markdown file ending in .md or .markdown.');
+      return null;
+    }
     const destDir = '.visual-skill-builder/imports';
     await api.fsMkdir({ dirPath: destDir, workspaceRoot });
-    await api.fsCopyIntoWorkspace({ sourcePaths: [filePaths[0]], destRelativePath: destDir, workspaceRoot });
-    const base = filePaths[0].replace(/\\/g, '/').split('/').pop() || 'import.md';
+    await api.fsCopyIntoWorkspace({ sourcePaths: [pickedPath], destRelativePath: destDir, workspaceRoot });
+    const base = pickedPath.replace(/\\/g, '/').split('/').pop() || 'import.md';
     const rel = `${destDir}/${base}`;
     const exists = await api.fsExists({ filePath: rel, workspaceRoot });
     return exists.exists ? rel : null;
-  }, [workspaceRoot]);
+  }, [workspaceRoot, setErr]);
 
   const finalizeImportedGraph = useCallback(async (g: SkillFlowGraphV2): Promise<SkillFlowGraphV2> => {
     const canonical = canonicalizeSkillGraph(g);
@@ -732,7 +749,7 @@ function SkillsSetupInner({
       setBusy(true);
       setPhase('json');
       activeImportRef.current = true;
-      appendLog('json', 'Starting canonical graph import (V2 prompt)...', 'info');
+      appendLog('json', 'Starting canonical graph import (V3 prompt)...', 'info');
       try {
         if (!api?.fsReadFile) throw new Error('Filesystem read API unavailable.');
         appendLog('read', `Reading Markdown file: ${rel}`, 'info');
@@ -988,6 +1005,43 @@ function SkillsSetupInner({
     [stageMarkdownToWorkspace],
   );
 
+  const compileGraphMarkdown = useCallback(
+    async (payload: SkillFlowGraphV2, logScope: 'save' | 'export' = 'save'): Promise<string> => {
+      let md = graphToSkillMarkdown(payload);
+      const compilePrompt = buildSkillGraphToMarkdownCompilePromptV2(JSON.stringify(skillFlowGraphV2ToV3(payload), null, 2));
+      appendLog(logScope, 'Compiling optimized SKILL.md from visual graph.', 'info');
+      const medium = await runCodexSkillImport(compilePrompt, undefined, {
+        model: 'gpt-5.4',
+        modelReasoningEffort: 'medium',
+      });
+      if (medium.ok && medium.stdout?.trim()) {
+        const candidate = medium.stdout.trim();
+        const check = validateCompiledSkillMarkdown(candidate);
+        if (check.ok) {
+          md = `${candidate.replace(/\n+$/, '')}\n`;
+          appendLog(logScope, 'Optimized SKILL.md compile passed validation.', 'info');
+        } else {
+          appendLog(logScope, `SKILL.md compile validation retry: ${check.issues.join('; ')}`, 'warn');
+          const high = await runCodexSkillImport(compilePrompt, undefined, {
+            model: 'gpt-5.4',
+            modelReasoningEffort: 'high',
+          });
+          if (high.ok && high.stdout?.trim()) {
+            const highCandidate = high.stdout.trim();
+            if (validateCompiledSkillMarkdown(highCandidate).ok) {
+              md = `${highCandidate.replace(/\n+$/, '')}\n`;
+              appendLog(logScope, 'High-reasoning SKILL.md compile passed validation.', 'info');
+            }
+          }
+        }
+      } else if (medium.error) {
+        appendLog(logScope, `SKILL.md compile fell back to local export: ${medium.error}`, 'warn');
+      }
+      return md;
+    },
+    [appendLog, runCodexSkillImport],
+  );
+
   const writeGraphToDisk = useCallback(
     async (g: SkillFlowGraphV2, opts?: { compileMarkdown?: boolean }) => {
       const api = window.electronAPI;
@@ -1010,7 +1064,7 @@ function SkillsSetupInner({
       const slug = slugifyGraphName(payload.name);
       const dir = `.codex/skills/${slug}`;
       await api.fsMkdir({ dirPath: dir, workspaceRoot });
-      const graphJson = `${JSON.stringify(payload, null, 2)}\n`;
+      const graphJson = `${JSON.stringify(skillFlowGraphV2ToV3(payload), null, 2)}\n`;
       await api.fsWriteFile({
         filePath: `${dir}/skill.graph.json`,
         content: graphJson,
@@ -1019,32 +1073,7 @@ function SkillsSetupInner({
       if (val.ok) {
         let md = graphToSkillMarkdown(payload);
         if (opts?.compileMarkdown) {
-          const compilePrompt = buildSkillGraphToMarkdownCompilePromptV2(JSON.stringify(payload, null, 2));
-          const medium = await runCodexSkillImport(compilePrompt, undefined, {
-            model: 'gpt-5.4',
-            modelReasoningEffort: 'medium',
-          });
-          if (medium.ok && medium.stdout?.trim()) {
-            const candidate = medium.stdout.trim();
-            const check = validateCompiledSkillMarkdown(candidate);
-            if (check.ok) {
-              md = `${candidate.replace(/\n+$/, '')}\n`;
-            } else {
-              appendLog('save', `SKILL.md compile validation retry: ${check.issues.join('; ')}`, 'warn');
-              const high = await runCodexSkillImport(compilePrompt, undefined, {
-                model: 'gpt-5.4',
-                modelReasoningEffort: 'high',
-              });
-              if (high.ok && high.stdout?.trim()) {
-                const highCandidate = high.stdout.trim();
-                if (validateCompiledSkillMarkdown(highCandidate).ok) {
-                  md = `${highCandidate.replace(/\n+$/, '')}\n`;
-                }
-              }
-            }
-          } else if (medium.error) {
-            appendLog('save', `SKILL.md compile fell back to local export: ${medium.error}`, 'warn');
-          }
+          md = await compileGraphMarkdown(payload, 'save');
         }
         await api.fsWriteFile({
           filePath: `${dir}/SKILL.md`,
@@ -1064,7 +1093,7 @@ function SkillsSetupInner({
       }, 850);
       onAudit?.('skills:graph-save', `${dir}/skill.graph.json`, true);
     },
-    [workspaceRoot, refreshSkillFileList, onAudit, runCodexSkillImport, appendLog],
+    [workspaceRoot, refreshSkillFileList, onAudit, compileGraphMarkdown],
   );
 
   const saveGraph = useCallback(async () => {
@@ -1196,6 +1225,52 @@ function SkillsSetupInner({
       await runImportFromPath(row.mdRelPath);
     },
     [runImportFromPath],
+  );
+
+  const exportSkillRow = useCallback(
+    async (row: SkillListRow) => {
+      const api = window.electronAPI;
+      if (!api?.fsReadFile || !api.showSaveFilePicker || !api.fsWriteAbsoluteFile) {
+        setErr('Export is only available in the desktop app.');
+        return;
+      }
+      if (busy) return;
+      setBusy(true);
+      try {
+        appendLog('export', `Loading graph for export: ${row.graphRelPath}`, 'info');
+        const raw = await api.fsReadFile({ filePath: row.graphRelPath, workspaceRoot });
+        if (typeof raw !== 'string') throw new Error('Could not read graph JSON for export.');
+        const parsed = normalizeSkillFlowGraphAny(JSON.parse(raw));
+        if (!parsed) throw new Error('Could not parse skill graph JSON for export.');
+        const canonical = canonicalizeSkillGraph(parsed);
+        const validationResult = validateSkillFlowGraphV2(canonical);
+        const blockingIssues = validationResult.issues.filter((issue) => issue.severity === 'error');
+        if (blockingIssues.length) {
+          appendLog('export', `Exporting with validation issues: ${blockingIssues.map((i) => i.message).join('; ')}`, 'warn');
+        }
+        const slug = slugifyGraphName(canonical.name);
+        const targetPath = await api.showSaveFilePicker({
+          defaultPath: `${workspaceRoot}/${slug}-SKILL.md`,
+          filters: [{ name: 'Markdown skill', extensions: ['md'] }],
+        });
+        if (!targetPath) {
+          appendLog('export', 'Export canceled.', 'info');
+          return;
+        }
+        const md = await compileGraphMarkdown(canonical, 'export');
+        await api.fsWriteAbsoluteFile({ filePath: targetPath, content: md });
+        appendLog('export', `Exported optimized SKILL.md to ${targetPath}`, 'info');
+        onAudit?.('skills:export-md', targetPath, true);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        setErr(message);
+        appendLog('export', message, 'error');
+        onAudit?.('skills:export-md', row.graphRelPath, false);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [appendLog, busy, compileGraphMarkdown, onAudit, workspaceRoot],
   );
 
   const deleteSkillRow = useCallback(
@@ -2069,7 +2144,7 @@ function SkillsSetupInner({
               Select MD file
             </button>
             <button type="button" className="btn-primary btn-compact" disabled={busy} onClick={() => void runImportPipeline()}>
-              Run import (V2 pipeline)
+              Run import (V3 pipeline)
             </button>
             <span className="badge">{busy ? 'Busy…' : phase}</span>
             {stagedRelPath ? (
@@ -2178,6 +2253,15 @@ function SkillsSetupInner({
                     onClick={() => void regenerateSkillRow(e)}
                   >
                     Regenerate
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-compact"
+                    disabled={busy}
+                    title="Export an optimized agent-ready SKILL.md"
+                    onClick={() => void exportSkillRow(e)}
+                  >
+                    Export MD
                   </button>
                   <button type="button" className="btn-secondary btn-compact" onClick={() => void deleteSkillRow(e)}>
                     Delete

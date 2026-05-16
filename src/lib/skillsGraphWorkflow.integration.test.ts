@@ -9,6 +9,7 @@ import { buildFastBoardSkillLayoutPlan } from './skillFlowBoardLayout';
 import { SKILL_ARTIFACT_RF_TYPE, skillGraphToReactFlow } from './skillFlowRf';
 import type { SkillFlowGraphV2 } from './skillFlowGraphV2';
 import { SKILL_FLOW_GRAPH_V2_VERSION } from './skillFlowGraphV2';
+import { RESPONSE_EDGE_STROKE, VARIABLE_READ_EDGE_STROKE, VARIABLE_WRITE_EDGE_STROKE } from './skillFlowEdgeStyles';
 
 function minimalSkillGraph(): SkillFlowGraphV2 {
   return {
@@ -83,5 +84,103 @@ describe('skills graph workflow (integration)', () => {
     const { nodes, edges } = skillGraphToReactFlow(viaApply, null, [], { showVariables: true });
     expect(nodes.some((n) => n.type === SKILL_ARTIFACT_RF_TYPE)).toBe(true);
     expect(edges.some((e) => typeof e.id === 'string' && e.id.startsWith('rf-var-'))).toBe(true);
+  });
+
+  it('colors response-target graph edges purple even without layout metadata', () => {
+    const graph: SkillFlowGraphV2 = {
+      version: SKILL_FLOW_GRAPH_V2_VERSION,
+      id: 'response-colors',
+      name: 'Response colors',
+      nodes: [
+        { id: 's', label: 'Step', kind: 'step', ui: { x: 0, y: 0, width: 220, height: 96 } },
+        { id: 'response', label: 'Response', kind: 'response', ui: { x: 360, y: 0, width: 220, height: 96 } },
+      ],
+      edges: [
+        { id: 'to-response', source: 's', target: 'response', kind: 'depends_on', ui: { semanticKind: 'dependency' } },
+      ],
+    };
+
+    const { edges } = skillGraphToReactFlow(graph, null, []);
+    expect(edges.find((e) => e.id === 'to-response')?.style).toMatchObject({
+      stroke: RESPONSE_EDGE_STROKE,
+    });
+  });
+
+  it('colors generated artifact edges into the response purple', async () => {
+    const graph: SkillFlowGraphV2 = {
+      version: SKILL_FLOW_GRAPH_V2_VERSION,
+      id: 'response-artifact-colors',
+      name: 'Response artifact colors',
+      nodes: [
+        { id: 's', label: 'Step', kind: 'step', ui: { x: 0, y: 0, width: 220, height: 96 } },
+        { id: 'response', label: 'Response', kind: 'response', ui: { x: 360, y: 0, width: 220, height: 96 } },
+      ],
+      edges: [],
+    };
+    const plan = {
+      ...buildFastBoardSkillLayoutPlan(graph),
+      dataArtifacts: [
+        {
+          id: 'artifact-final',
+          label: 'Final evidence',
+          kind: 'output-draft' as const,
+          producedBy: ['s'],
+          consumedBy: ['response'],
+          visual: { colorKey: 'artifact' as const, emphasis: 'secondary' as const },
+          exportBehavior: 'visual-only' as const,
+        },
+      ],
+    };
+    const laid = await applySkillLayoutPlan(graph, plan, {
+      preserveManualPositions: false,
+      strategy: 'fast-board',
+    });
+
+    const { edges } = skillGraphToReactFlow(laid, null, [], { showVariables: true });
+    const responseArtifactEdge = edges.find((e) => e.id === 'rf-var-read:artifact-final:response');
+    expect(responseArtifactEdge?.style).toMatchObject({
+      stroke: RESPONSE_EDGE_STROKE,
+      strokeWidth: 3.35,
+      opacity: 1,
+    });
+    expect(responseArtifactEdge?.style?.strokeDasharray).toBeUndefined();
+  });
+
+  it('preserves data read/write edge colors after applying fast-board layout', async () => {
+    const graph: SkillFlowGraphV2 = {
+      version: SKILL_FLOW_GRAPH_V2_VERSION,
+      id: 'data-colors',
+      name: 'Data colors',
+      nodes: [
+        { id: 's', label: 'Step', kind: 'step', ui: { x: 0, y: 0, width: 220, height: 96 } },
+        {
+          id: 'var-notes',
+          label: 'Notes',
+          kind: 'variable',
+          variable: { variableName: '$notes', label: 'Notes' },
+          ui: { x: 260, y: 0, width: 220, height: 96 },
+        },
+        { id: 'use', label: 'Use notes', kind: 'step', ui: { x: 520, y: 0, width: 220, height: 96 } },
+        { id: 'response', label: 'Response', kind: 'response', ui: { x: 780, y: 0, width: 220, height: 96 } },
+      ],
+      edges: [
+        { id: 'write', source: 's', target: 'var-notes', kind: 'depends_on', ui: { semanticKind: 'data_write' } },
+        { id: 'read', source: 'var-notes', target: 'use', kind: 'depends_on', ui: { semanticKind: 'data_read' } },
+        { id: 'respond', source: 'use', target: 'response', kind: 'sequence' },
+      ],
+    };
+    const plan = buildFastBoardSkillLayoutPlan(graph);
+    const laid = await applySkillLayoutPlan(graph, plan, {
+      preserveManualPositions: false,
+      strategy: 'fast-board',
+    });
+
+    expect(laid.edges.find((e) => e.id === 'write')?.ui?.semanticKind).toBe('data_write');
+    expect(laid.edges.find((e) => e.id === 'read')?.ui?.semanticKind).toBe('data_read');
+
+    const { edges } = skillGraphToReactFlow(laid, null, []);
+    expect(edges.find((e) => e.id === 'write')?.style).toMatchObject({ stroke: VARIABLE_WRITE_EDGE_STROKE });
+    expect(edges.find((e) => e.id === 'read')?.style).toMatchObject({ stroke: VARIABLE_READ_EDGE_STROKE });
+    expect(edges.find((e) => e.id === 'respond')?.style).toMatchObject({ stroke: RESPONSE_EDGE_STROKE });
   });
 });

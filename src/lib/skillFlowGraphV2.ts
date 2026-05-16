@@ -8,6 +8,7 @@ import {
   type SkillFlowNode,
 } from './skillFlowGraph';
 export const SKILL_FLOW_GRAPH_V2_VERSION = '2.0' as const;
+export const SKILL_FLOW_GRAPH_V3_VERSION = 'SkillFlowGraphV3' as const;
 
 /** Display / semantic kinds for skill planner nodes */
 export type SkillNodeKind =
@@ -28,6 +29,31 @@ export type SkillNodeKind =
   | 'variable';
 
 export type SkillEdgeKind = 'sequence' | 'depends_on' | 'branch' | 'parallel';
+
+export type SkillFlowGraphV3NodeKind =
+  | 'start'
+  | 'task'
+  | 'decision'
+  | 'parallel_fork'
+  | 'parallel_join'
+  | 'guardrail'
+  | 'artifact'
+  | 'response'
+  | 'loop_controller'
+  | 'subflow';
+
+export type SkillFlowGraphV3EdgeKind =
+  | 'main_flow'
+  | 'data_write'
+  | 'data_read'
+  | 'branch_true'
+  | 'branch_false'
+  | 'branch_default'
+  | 'parallel_start'
+  | 'parallel_join'
+  | 'dependency'
+  | 'recovery'
+  | 'response_contribution';
 
 /** Node lifecycle / validation state (legacy `ok`/`warn` normalized on load). */
 export type SkillNodeStatus =
@@ -98,6 +124,82 @@ export interface SkillNodeContract {
   reads?: string[];
   /** Variable names written by this node. */
   writes?: string[];
+}
+
+export interface SkillCheckSpec {
+  id: string;
+  description: string;
+  severity?: 'info' | 'warn' | 'error';
+}
+
+export interface SkillFailureModeSpec {
+  id: string;
+  description: string;
+  severity?: 'low' | 'medium' | 'high';
+  recovery?: string;
+}
+
+export interface SkillExampleSpec {
+  input?: string;
+  output: string;
+}
+
+export interface SkillExecutionSpec {
+  preconditions: string[];
+  postconditions: string[];
+  sideEffectLevel: 'none' | 'local_write' | 'external_write' | 'network';
+  idempotency: 'idempotent' | 'non_idempotent' | 'unknown';
+  retryPolicy: {
+    maxRetries: number;
+    backoff: 'none' | 'linear' | 'exponential';
+    retryOn: string[];
+  } | null;
+  timeoutMs: number | null;
+  requiresHumanApproval: boolean;
+}
+
+export interface SkillRecoverySpec {
+  onCheckFailureGoto: string | null;
+  onRuntimeFailureGoto: string | null;
+  fallbackResponseMode: 'block' | 'degrade' | 'ask_user' | 'silent_skip';
+}
+
+export interface SkillArtifactSpec {
+  variableName: string;
+  label: string;
+  dataType: string;
+  artifactKind: 'input' | 'intermediate' | 'output' | 'log' | 'reference';
+  cardinality: 'one' | 'many';
+  storage: 'memory' | 'workspace_file' | 'ephemeral_container' | 'external';
+  pathTemplate: string | null;
+  referenceStyle: 'inline' | 'path' | 'summary_then_path';
+  retention: {
+    scope: 'turn' | 'session' | 'saved_skill' | 'external_system';
+    cleanup: 'none' | 'on_success' | 'on_error' | 'on_export' | 'on_expiry';
+  };
+  schemaRef: string | null;
+  exampleValue: string | null;
+  provenance: {
+    generatedBy: string[];
+    usedBy: string[];
+    derivedFrom: string[];
+  };
+  exportBehavior: {
+    includeInSkillMd: boolean;
+    exposeToAgent: boolean;
+    exposeToUser: boolean;
+  };
+}
+
+export interface SkillResponseSpec {
+  audience: 'user' | 'agent' | 'developer';
+  format: 'markdown' | 'json' | 'text';
+  mustMentionArtifacts: string[];
+  mustNotClaimWithoutEvidence: boolean;
+  missingDataBehavior: 'state_missing' | 'best_effort' | 'ask_user';
+  tone: string;
+  requiredSections: string[];
+  citationPolicy: 'none' | 'artifact_only' | 'source_required';
 }
 
 export type SkillNodeGenerationJobStatus =
@@ -182,6 +284,14 @@ export interface SkillNodeV2 {
   variableReads?: string[];
   /** Declared variable writes */
   variableWrites?: string[];
+  /** V3 execution semantics, preserved across import/export. */
+  execution?: SkillExecutionSpec;
+  /** V3 recovery semantics, preserved across import/export. */
+  recovery?: SkillRecoverySpec;
+  /** V3 artifact semantics for variable/artifact nodes. */
+  artifactSpec?: SkillArtifactSpec;
+  /** V3 final response contract for response nodes. */
+  responseSpec?: SkillResponseSpec;
 }
 
 export interface SkillEdgeV2 {
@@ -224,6 +334,73 @@ export interface SkillFlowGraphV2 {
   groups?: SkillGroupV2[];
   /** Last AI/fast layout metadata (optional persistence) */
   layout?: SkillGraphLayoutState;
+}
+
+export interface SkillFlowGraphV3Node {
+  id: string;
+  kind: SkillFlowGraphV3NodeKind;
+  label: string;
+  summary: string;
+  body: string;
+  contract: {
+    purpose: string;
+    inputs: string[];
+    instructions: string[];
+    outputs: string[];
+    checks: SkillCheckSpec[];
+    failureModes: SkillFailureModeSpec[];
+    examples: SkillExampleSpec[];
+    reads: string[];
+    writes: string[];
+  };
+  execution: SkillExecutionSpec;
+  recovery: SkillRecoverySpec;
+  artifactSpec: SkillArtifactSpec | null;
+  responseSpec: SkillResponseSpec | null;
+  tags: string[];
+  layer: number | null;
+}
+
+export interface SkillFlowGraphV3Edge {
+  id: string;
+  from: string;
+  to: string;
+  semanticKind: SkillFlowGraphV3EdgeKind;
+  label: string | null;
+  condition: string | null;
+  guard: string | null;
+  priority: number | null;
+}
+
+export interface SkillFlowGraphV3 {
+  schemaVersion: typeof SKILL_FLOW_GRAPH_V3_VERSION;
+  skill: {
+    slug: string;
+    name: string;
+    description: string;
+    language: string;
+    activation: {
+      useWhen: string[];
+      dontUseWhen: string[];
+      outputsAndSuccessCriteria: string[];
+    };
+    compatibility: string | null;
+    allowedTools: string[] | null;
+    tags: string[];
+  };
+  graph: {
+    entryNodeId: string;
+    responseNodeId: string;
+    nodes: SkillFlowGraphV3Node[];
+    edges: SkillFlowGraphV3Edge[];
+    resources: Array<{ id: string; kind: 'reference' | 'asset' | 'script'; path: string; description: string | null }>;
+    sourceAnchors: Array<{ id: string; sourceId: string; startLine: number | null; endLine: number | null; excerpt: string }>;
+  };
+  compileHints: {
+    keepSkillMdUnderTokens: number;
+    preferReferencesForLargeExamples: boolean;
+    preferredSectionOrder: string[];
+  };
 }
 
 function clampLabel(s: string, max: number): string {
@@ -388,6 +565,125 @@ function normalizeSkillVariableMeta(raw: Record<string, unknown>): SkillVariable
   return out;
 }
 
+function variableMetaToArtifactSpec(variable: SkillVariableMeta, nodeId: string): SkillArtifactSpec {
+  const storage = variable.storage === 'in-memory' ? 'memory' : 'workspace_file';
+  const dataType = variable.dataType ?? 'unknown';
+  return {
+    variableName: variable.variableName,
+    label: variable.label ?? variable.variableName.replace(/^\$/, ''),
+    dataType,
+    artifactKind: variable.artifactKind === 'output-draft' ? 'output' : 'intermediate',
+    cardinality: dataType === 'list' ? 'many' : 'one',
+    storage,
+    pathTemplate: variable.pathTemplate ?? null,
+    referenceStyle: storage === 'workspace_file' ? 'path' : 'inline',
+    retention: {
+      scope: storage === 'workspace_file' ? 'saved_skill' : 'turn',
+      cleanup: 'none',
+    },
+    schemaRef: null,
+    exampleValue: variable.sampleValue ?? null,
+    provenance: {
+      generatedBy: variable.producedBy ?? [],
+      usedBy: variable.consumedBy ?? [],
+      derivedFrom: [nodeId],
+    },
+    exportBehavior: {
+      includeInSkillMd: variable.exportBehavior !== 'visual-only',
+      exposeToAgent: variable.exportBehavior !== 'visual-only',
+      exposeToUser: false,
+    },
+  };
+}
+
+function normalizeArtifactSpec(raw: unknown, fallback: SkillVariableMeta | undefined, nodeId: string): SkillArtifactSpec | undefined {
+  if (!raw || typeof raw !== 'object') return fallback ? variableMetaToArtifactSpec(fallback, nodeId) : undefined;
+  const o = raw as Record<string, unknown>;
+  const variableName =
+    typeof o.variableName === 'string' && o.variableName.trim()
+      ? o.variableName.trim()
+      : fallback?.variableName ?? '';
+  if (!variableName) return undefined;
+  const provenance = o.provenance && typeof o.provenance === 'object' ? (o.provenance as Record<string, unknown>) : {};
+  const exportBehavior = o.exportBehavior && typeof o.exportBehavior === 'object' ? (o.exportBehavior as Record<string, unknown>) : {};
+  const retention = o.retention && typeof o.retention === 'object' ? (o.retention as Record<string, unknown>) : {};
+  return {
+    variableName,
+    label: typeof o.label === 'string' && o.label.trim() ? o.label.trim() : fallback?.label ?? variableName,
+    dataType: typeof o.dataType === 'string' && o.dataType.trim() ? o.dataType.trim() : fallback?.dataType ?? 'unknown',
+    artifactKind:
+      o.artifactKind === 'input' || o.artifactKind === 'intermediate' || o.artifactKind === 'output' || o.artifactKind === 'log' || o.artifactKind === 'reference'
+        ? o.artifactKind
+        : 'intermediate',
+    cardinality: o.cardinality === 'many' ? 'many' : 'one',
+    storage:
+      o.storage === 'memory' || o.storage === 'workspace_file' || o.storage === 'ephemeral_container' || o.storage === 'external'
+        ? o.storage
+        : fallback?.storage === 'in-memory'
+          ? 'memory'
+          : 'workspace_file',
+    pathTemplate: typeof o.pathTemplate === 'string' && o.pathTemplate.trim() ? o.pathTemplate.trim() : fallback?.pathTemplate ?? null,
+    referenceStyle: o.referenceStyle === 'inline' || o.referenceStyle === 'summary_then_path' ? o.referenceStyle : 'path',
+    retention: {
+      scope:
+        retention.scope === 'turn' || retention.scope === 'session' || retention.scope === 'saved_skill' || retention.scope === 'external_system'
+          ? retention.scope
+          : 'saved_skill',
+      cleanup:
+        retention.cleanup === 'on_success' ||
+        retention.cleanup === 'on_error' ||
+        retention.cleanup === 'on_export' ||
+        retention.cleanup === 'on_expiry'
+          ? retention.cleanup
+          : 'none',
+    },
+    schemaRef: typeof o.schemaRef === 'string' && o.schemaRef.trim() ? o.schemaRef.trim() : null,
+    exampleValue: typeof o.exampleValue === 'string' ? o.exampleValue : fallback?.sampleValue ?? null,
+    provenance: {
+      generatedBy: normalizeStringArray(provenance.generatedBy) ?? fallback?.producedBy ?? [],
+      usedBy: normalizeStringArray(provenance.usedBy) ?? fallback?.consumedBy ?? [],
+      derivedFrom: normalizeStringArray(provenance.derivedFrom) ?? [nodeId],
+    },
+    exportBehavior: {
+      includeInSkillMd: exportBehavior.includeInSkillMd !== false && fallback?.exportBehavior !== 'visual-only',
+      exposeToAgent: exportBehavior.exposeToAgent !== false && fallback?.exportBehavior !== 'visual-only',
+      exposeToUser: exportBehavior.exposeToUser === true,
+    },
+  };
+}
+
+function defaultResponseSpec(): SkillResponseSpec {
+  return {
+    audience: 'user',
+    format: 'markdown',
+    mustMentionArtifacts: [],
+    mustNotClaimWithoutEvidence: true,
+    missingDataBehavior: 'state_missing',
+    tone: 'direct, concise, operational',
+    requiredSections: [],
+    citationPolicy: 'artifact_only',
+  };
+}
+
+function normalizeResponseSpec(raw: unknown): SkillResponseSpec | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const base = defaultResponseSpec();
+  return {
+    audience: o.audience === 'agent' || o.audience === 'developer' ? o.audience : 'user',
+    format: o.format === 'json' || o.format === 'text' ? o.format : 'markdown',
+    mustMentionArtifacts: normalizeStringArray(o.mustMentionArtifacts) ?? [],
+    mustNotClaimWithoutEvidence: typeof o.mustNotClaimWithoutEvidence === 'boolean' ? o.mustNotClaimWithoutEvidence : base.mustNotClaimWithoutEvidence,
+    missingDataBehavior:
+      o.missingDataBehavior === 'best_effort' || o.missingDataBehavior === 'ask_user'
+        ? o.missingDataBehavior
+        : 'state_missing',
+    tone: typeof o.tone === 'string' && o.tone.trim() ? o.tone.trim() : base.tone,
+    requiredSections: normalizeStringArray(o.requiredSections) ?? [],
+    citationPolicy: o.citationPolicy === 'none' || o.citationPolicy === 'source_required' ? o.citationPolicy : 'artifact_only',
+  };
+}
+
 function normalizeSkillNodeContract(raw: unknown): SkillNodeContract | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const c = raw as Record<string, unknown>;
@@ -410,6 +706,78 @@ function normalizeSkillNodeContract(raw: unknown): SkillNodeContract | undefined
   const writes = normalizeStringArray(c.writes);
   if (writes) out.writes = writes;
   return Object.keys(out).length ? out : undefined;
+}
+
+function defaultExecutionSpec(kind: SkillNodeKind | SkillFlowGraphV3NodeKind): SkillExecutionSpec {
+  const noSideEffects = kind === 'response' || kind === 'decision' || kind === 'guardrail';
+  return {
+    preconditions: [],
+    postconditions: [],
+    sideEffectLevel: noSideEffects ? 'none' : 'local_write',
+    idempotency: 'unknown',
+    retryPolicy: null,
+    timeoutMs: null,
+    requiresHumanApproval: false,
+  };
+}
+
+function normalizeExecutionSpec(raw: unknown, kind: SkillNodeKind | SkillFlowGraphV3NodeKind): SkillExecutionSpec {
+  if (!raw || typeof raw !== 'object') return defaultExecutionSpec(kind);
+  const o = raw as Record<string, unknown>;
+  const base = defaultExecutionSpec(kind);
+  const sideEffectLevel =
+    o.sideEffectLevel === 'none' ||
+    o.sideEffectLevel === 'local_write' ||
+    o.sideEffectLevel === 'external_write' ||
+    o.sideEffectLevel === 'network'
+      ? o.sideEffectLevel
+      : base.sideEffectLevel;
+  const idempotency =
+    o.idempotency === 'idempotent' || o.idempotency === 'non_idempotent' || o.idempotency === 'unknown'
+      ? o.idempotency
+      : base.idempotency;
+  let retryPolicy: SkillExecutionSpec['retryPolicy'] = null;
+  if (o.retryPolicy && typeof o.retryPolicy === 'object') {
+    const r = o.retryPolicy as Record<string, unknown>;
+    retryPolicy = {
+      maxRetries: typeof r.maxRetries === 'number' && Number.isFinite(r.maxRetries) ? Math.max(0, Math.floor(r.maxRetries)) : 0,
+      backoff: r.backoff === 'linear' || r.backoff === 'exponential' ? r.backoff : 'none',
+      retryOn: normalizeStringArray(r.retryOn) ?? [],
+    };
+  }
+  return {
+    preconditions: normalizeStringArray(o.preconditions) ?? [],
+    postconditions: normalizeStringArray(o.postconditions) ?? [],
+    sideEffectLevel,
+    idempotency,
+    retryPolicy,
+    timeoutMs: typeof o.timeoutMs === 'number' && Number.isFinite(o.timeoutMs) ? o.timeoutMs : null,
+    requiresHumanApproval: o.requiresHumanApproval === true,
+  };
+}
+
+function defaultRecoverySpec(): SkillRecoverySpec {
+  return {
+    onCheckFailureGoto: null,
+    onRuntimeFailureGoto: null,
+    fallbackResponseMode: 'ask_user',
+  };
+}
+
+function normalizeRecoverySpec(raw: unknown): SkillRecoverySpec {
+  if (!raw || typeof raw !== 'object') return defaultRecoverySpec();
+  const o = raw as Record<string, unknown>;
+  return {
+    onCheckFailureGoto: typeof o.onCheckFailureGoto === 'string' && o.onCheckFailureGoto.trim() ? o.onCheckFailureGoto.trim() : null,
+    onRuntimeFailureGoto: typeof o.onRuntimeFailureGoto === 'string' && o.onRuntimeFailureGoto.trim() ? o.onRuntimeFailureGoto.trim() : null,
+    fallbackResponseMode:
+      o.fallbackResponseMode === 'block' ||
+      o.fallbackResponseMode === 'degrade' ||
+      o.fallbackResponseMode === 'ask_user' ||
+      o.fallbackResponseMode === 'silent_skip'
+        ? o.fallbackResponseMode
+        : 'ask_user',
+  };
 }
 
 function isSkillNodeGenerationJobStatus(x: unknown): x is SkillNodeGenerationJobStatus {
@@ -560,6 +928,12 @@ export function normalizeSkillFlowGraphV2(raw: unknown): SkillFlowGraphV2 | null
       const vm = normalizeSkillVariableMeta(n.variable as Record<string, unknown>);
       if (vm) node.variable = vm;
     }
+    node.execution = normalizeExecutionSpec(n.execution, kind);
+    node.recovery = normalizeRecoverySpec(n.recovery);
+    const artifactSpec = normalizeArtifactSpec(n.artifactSpec, node.variable, nid);
+    if (artifactSpec) node.artifactSpec = artifactSpec;
+    const responseSpec = normalizeResponseSpec(n.responseSpec);
+    if (responseSpec) node.responseSpec = responseSpec;
     if (n.generation && typeof n.generation === 'object') {
       const g = normalizeSkillNodeGeneration(n.generation as Record<string, unknown>);
       if (g) node.generation = g;
@@ -675,10 +1049,319 @@ export function normalizeSkillFlowGraphV2(raw: unknown): SkillFlowGraphV2 | null
   };
 }
 
+function isSkillFlowGraphV3(raw: unknown): raw is SkillFlowGraphV3 {
+  return Boolean(
+    raw &&
+      typeof raw === 'object' &&
+      (raw as Record<string, unknown>).schemaVersion === SKILL_FLOW_GRAPH_V3_VERSION &&
+      (raw as Record<string, unknown>).skill &&
+      (raw as Record<string, unknown>).graph,
+  );
+}
+
+function v3KindToV2Kind(kind: SkillFlowGraphV3NodeKind): SkillNodeKind {
+  switch (kind) {
+    case 'start':
+      return 'goal';
+    case 'decision':
+      return 'decision';
+    case 'guardrail':
+      return 'guardrail';
+    case 'artifact':
+      return 'variable';
+    case 'response':
+      return 'response';
+    case 'parallel_fork':
+    case 'parallel_join':
+      return 'step';
+    case 'loop_controller':
+    case 'subflow':
+    case 'task':
+    default:
+      return 'step';
+  }
+}
+
+function v2KindToV3Kind(kind: SkillNodeKind): SkillFlowGraphV3NodeKind {
+  switch (kind) {
+    case 'goal':
+    case 'role':
+    case 'input':
+    case 'output':
+    case 'step':
+    case 'tool':
+    case 'validation':
+    case 'example':
+    case 'note':
+    case 'group':
+      return 'task';
+    case 'decision':
+      return 'decision';
+    case 'rule':
+    case 'guardrail':
+      return 'guardrail';
+    case 'variable':
+      return 'artifact';
+    case 'response':
+      return 'response';
+  }
+}
+
+function v3EdgeKindToV2(kind: SkillFlowGraphV3EdgeKind): SkillEdgeKind {
+  if (kind === 'branch_true' || kind === 'branch_false' || kind === 'branch_default') return 'branch';
+  if (kind === 'parallel_start' || kind === 'parallel_join') return 'parallel';
+  if (kind === 'main_flow' || kind === 'response_contribution') return 'sequence';
+  return 'depends_on';
+}
+
+function v3EdgeKindToSemantic(kind: SkillFlowGraphV3EdgeKind): SkillEdgeSemanticKind {
+  if (kind === 'data_read' || kind === 'data_write') return kind;
+  if (kind === 'branch_true' || kind === 'branch_false' || kind === 'branch_default') return 'branch';
+  if (kind === 'parallel_start' || kind === 'parallel_join') return 'parallel';
+  if (kind === 'recovery') return 'constraint';
+  if (kind === 'dependency') return 'dependency';
+  return 'main_flow';
+}
+
+function semanticToV3EdgeKind(edge: SkillEdgeV2): SkillFlowGraphV3EdgeKind {
+  const semantic = edge.ui?.semanticKind;
+  if (semantic === 'data_read' || semantic === 'data_write') return semantic;
+  if (semantic === 'parallel' || edge.kind === 'parallel') return 'parallel_start';
+  if (semantic === 'branch' || edge.kind === 'branch') {
+    const label = (edge.label ?? '').toLowerCase();
+    if (/\b(false|no|fail|reject)\b/.test(label)) return 'branch_false';
+    if (/\b(default|else|fallback)\b/.test(label)) return 'branch_default';
+    return 'branch_true';
+  }
+  if (semantic === 'dependency' || edge.kind === 'depends_on') return 'dependency';
+  return 'main_flow';
+}
+
+function v3ArtifactToVariableMeta(artifact: SkillArtifactSpec): SkillVariableMeta {
+  return {
+    variableName: artifact.variableName,
+    label: artifact.label,
+    dataType: isSkillVariableDataType(artifact.dataType) ? artifact.dataType : 'unknown',
+    artifactKind:
+      artifact.artifactKind === 'output'
+        ? 'output-draft'
+        : artifact.artifactKind === 'input'
+          ? 'notes'
+          : 'custom',
+    storage: artifact.storage === 'memory' ? 'in-memory' : 'workspace-file',
+    ...(artifact.pathTemplate ? { pathTemplate: artifact.pathTemplate } : {}),
+    ...(artifact.exampleValue !== null ? { sampleValue: artifact.exampleValue } : {}),
+    producedBy: artifact.provenance.generatedBy,
+    consumedBy: artifact.provenance.usedBy,
+    exportBehavior: artifact.exportBehavior.includeInSkillMd ? 'include-in-markdown' : 'visual-only',
+  };
+}
+
+export function migrateSkillFlowGraphV3ToV2(v3: SkillFlowGraphV3): SkillFlowGraphV2 | null {
+  const nodes: SkillNodeV2[] = [];
+  for (const node of v3.graph.nodes) {
+    const kind = v3KindToV2Kind(node.kind);
+    const contract: SkillNodeContract = {
+      purpose: node.contract?.purpose || node.summary || node.label,
+      inputs: node.contract?.inputs ?? [],
+      instructions: node.contract?.instructions ?? [],
+      outputs: node.contract?.outputs ?? [],
+      checks: (node.contract?.checks ?? []).map((c) => c.description),
+      failureModes: (node.contract?.failureModes ?? []).map((f) => f.recovery ? `${f.description} Recovery: ${f.recovery}` : f.description),
+      examples: (node.contract?.examples ?? []).map((e) => e.input ? `${e.input} -> ${e.output}` : e.output),
+      reads: node.contract?.reads ?? [],
+      writes: node.contract?.writes ?? [],
+    };
+    const v2: SkillNodeV2 = {
+      id: node.id,
+      label: node.label,
+      kind,
+      summary: node.summary,
+      body: node.body,
+      contract,
+      tags: node.tags,
+      ...(typeof node.layer === 'number' ? { layer: node.layer } : {}),
+      status: 'valid',
+      execution: normalizeExecutionSpec(node.execution, kind),
+      recovery: normalizeRecoverySpec(node.recovery),
+      ...(node.artifactSpec ? { artifactSpec: normalizeArtifactSpec(node.artifactSpec, undefined, node.id) } : {}),
+      ...(node.responseSpec ? { responseSpec: normalizeResponseSpec(node.responseSpec) } : {}),
+    };
+    if (kind === 'variable' && node.artifactSpec) {
+      v2.variable = v3ArtifactToVariableMeta(node.artifactSpec);
+      v2.variableReads = contract.reads?.length ? contract.reads : undefined;
+      v2.variableWrites = contract.writes?.length ? contract.writes : undefined;
+    }
+    nodes.push(v2);
+  }
+  const edges: SkillEdgeV2[] = v3.graph.edges.map((edge) => ({
+    id: edge.id,
+    source: edge.from,
+    target: edge.to,
+    kind: v3EdgeKindToV2(edge.semanticKind),
+    ...(edge.label ? { label: edge.label } : {}),
+    ui: { semanticKind: v3EdgeKindToSemantic(edge.semanticKind) },
+  }));
+  const name = v3.skill.name?.trim();
+  if (!name || !nodes.length) return null;
+  return {
+    version: SKILL_FLOW_GRAPH_V2_VERSION,
+    id: v3.skill.slug || name,
+    name,
+    description: v3.skill.description,
+    sourceType: 'mixed',
+    nodes,
+    edges,
+  };
+}
+
+function toCheckSpecs(values: string[] | undefined): SkillCheckSpec[] {
+  return (values ?? []).map((description, index) => ({
+    id: `check_${index + 1}`,
+    description,
+  }));
+}
+
+function toFailureSpecs(values: string[] | undefined): SkillFailureModeSpec[] {
+  return (values ?? []).map((description, index) => ({
+    id: `failure_${index + 1}`,
+    description,
+    severity: 'medium',
+  }));
+}
+
+function toExampleSpecs(values: string[] | undefined): SkillExampleSpec[] {
+  return (values ?? []).map((output) => ({ output }));
+}
+
+function slugFromName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return slug || 'skill';
+}
+
+export function skillFlowGraphV2ToV3(graph: SkillFlowGraphV2): SkillFlowGraphV3 {
+  const responseNode = graph.nodes.find((n) => n.kind === 'response') ?? graph.nodes[graph.nodes.length - 1];
+  const firstOperational = graph.nodes.find((n) => n.kind !== 'variable' && n.kind !== 'group' && n.kind !== 'note') ?? graph.nodes[0];
+  const artifactNodeIds = new Set(graph.nodes.filter((n) => n.kind === 'variable').map((n) => n.id));
+  const producerByArtifact = new Map<string, string[]>();
+  const consumerByArtifact = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (edge.ui?.semanticKind === 'data_write' && artifactNodeIds.has(edge.target)) {
+      producerByArtifact.set(edge.target, [...(producerByArtifact.get(edge.target) ?? []), edge.source]);
+    }
+    if (edge.ui?.semanticKind === 'data_read' && artifactNodeIds.has(edge.source)) {
+      consumerByArtifact.set(edge.source, [...(consumerByArtifact.get(edge.source) ?? []), edge.target]);
+    }
+  }
+
+  const nodes: SkillFlowGraphV3Node[] = graph.nodes.map((node) => {
+    const artifact =
+      node.kind === 'variable'
+        ? normalizeArtifactSpec(
+            {
+              ...(node.artifactSpec ?? {}),
+              provenance: {
+                generatedBy: producerByArtifact.get(node.id) ?? node.variable?.producedBy ?? [],
+                usedBy: consumerByArtifact.get(node.id) ?? node.variable?.consumedBy ?? [],
+                derivedFrom: node.artifactSpec?.provenance.derivedFrom ?? [node.id],
+              },
+            },
+            node.variable,
+            node.id,
+          ) ?? null
+        : node.artifactSpec ?? null;
+    return {
+      id: node.id,
+      kind: v2KindToV3Kind(node.kind),
+      label: node.label,
+      summary: node.summary ?? node.contract?.purpose ?? node.label,
+      body: node.body ?? '',
+      contract: {
+        purpose: node.contract?.purpose ?? node.summary ?? node.label,
+        inputs: node.contract?.inputs ?? [],
+        instructions: node.contract?.instructions ?? [],
+        outputs: node.contract?.outputs ?? [],
+        checks: toCheckSpecs(node.contract?.checks),
+        failureModes: toFailureSpecs(node.contract?.failureModes),
+        examples: toExampleSpecs(node.contract?.examples),
+        reads: node.contract?.reads ?? node.variableReads ?? [],
+        writes: node.contract?.writes ?? node.variableWrites ?? [],
+      },
+      execution: normalizeExecutionSpec(node.execution, node.kind),
+      recovery: normalizeRecoverySpec(node.recovery),
+      artifactSpec: artifact,
+      responseSpec: node.kind === 'response' ? node.responseSpec ?? defaultResponseSpec() : node.responseSpec ?? null,
+      tags: node.tags ?? [],
+      layer: typeof node.layer === 'number' ? node.layer : null,
+    };
+  });
+
+  return {
+    schemaVersion: SKILL_FLOW_GRAPH_V3_VERSION,
+    skill: {
+      slug: slugFromName(graph.name),
+      name: graph.name,
+      description: graph.description ?? `Use the ${graph.name} visual skill graph as an executable workflow.`,
+      language: 'en',
+      activation: {
+        useWhen: [`Use when the user asks to run or edit the ${graph.name} workflow.`],
+        dontUseWhen: ['Do not use for one-off answers that do not need this reusable workflow.'],
+        outputsAndSuccessCriteria: ['The workflow completes and the final response reflects all required artifacts.'],
+      },
+      compatibility: 'Requires Codex skill execution with local workspace access when artifacts are stored as files.',
+      allowedTools: null,
+      tags: graph.nodes.flatMap((n) => n.tags ?? []).slice(0, 12),
+    },
+    graph: {
+      entryNodeId: firstOperational?.id ?? 'start',
+      responseNodeId: responseNode?.id ?? '',
+      nodes,
+      edges: graph.edges.map((edge, index) => ({
+        id: edge.id || `e${index + 1}`,
+        from: edge.source,
+        to: edge.target,
+        semanticKind:
+          edge.target === responseNode?.id && edge.ui?.semanticKind !== 'data_read'
+            ? 'response_contribution'
+            : semanticToV3EdgeKind(edge),
+        label: edge.label ?? null,
+        condition: edge.kind === 'branch' ? edge.label ?? null : null,
+        guard: null,
+        priority: edge.kind === 'branch' ? index + 1 : null,
+      })),
+      resources: [],
+      sourceAnchors: [],
+    },
+    compileHints: {
+      keepSkillMdUnderTokens: 5000,
+      preferReferencesForLargeExamples: true,
+      preferredSectionOrder: [
+        'What this skill does',
+        'Use when',
+        "Don't use when",
+        'Required inputs',
+        'Variables / Artifacts',
+        'Workflow',
+        'Guardrails and failure handling',
+        'Final response',
+      ],
+    },
+  };
+}
+
 /** Accept V2 JSON, legacy V1, or SkillFile linear graph */
 export function normalizeSkillFlowGraphAny(raw: unknown): SkillFlowGraphV2 | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
+
+  if (isSkillFlowGraphV3(raw)) {
+    return migrateSkillFlowGraphV3ToV2(raw);
+  }
 
   if (o.version === SKILL_FLOW_GRAPH_V2_VERSION || o.version === '2') {
     return normalizeSkillFlowGraphV2(raw);

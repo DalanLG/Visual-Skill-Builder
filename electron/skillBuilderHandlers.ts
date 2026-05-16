@@ -222,6 +222,13 @@ export function registerSkillBuilderHandlers(): void {
     return { ok: true };
   });
 
+  ipcMain.handle('fs:writeAbsoluteFile', async (_, { filePath, content }: { filePath: string; content: string }) => {
+    const resolved = path.resolve(filePath);
+    await fs.promises.mkdir(path.dirname(resolved), { recursive: true });
+    await fs.promises.writeFile(resolved, content, 'utf-8');
+    return { ok: true };
+  });
+
   ipcMain.handle('fs:readDir', async (_, { dirPath, workspaceRoot }) => {
     const resolved = resolveWithinWorkspace(workspaceRoot, dirPath || '.');
     const entries = await fs.promises.readdir(resolved, { withFileTypes: true });

@@ -81,12 +81,16 @@ export function fallbackGraphFromMarkdownIr(ir: SkillMarkdownIr): SkillFlowGraph
     sourceSections.length > 0
       ? sourceSections
       : [
-          {
+        {
+            id: 'section_001_imported-skill',
             depth: 1,
             title,
             text: description,
             bullets: [],
             codeLanguages: [],
+            startLine: 1,
+            endLine: 1,
+            blockIds: [],
           },
         ];
 

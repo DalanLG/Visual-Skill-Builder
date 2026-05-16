@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BRANCH_EDGE_STROKE,
   RESPONSE_EDGE_STROKE,
   VARIABLE_READ_EDGE_STROKE,
   VARIABLE_WRITE_EDGE_STROKE,
@@ -21,6 +22,20 @@ describe('resolveEdgeVisual', () => {
     expect(visual.stroke).toBe(RESPONSE_EDGE_STROKE);
     expect(visual.strokeWidth).toBeGreaterThan(3);
     expect(visual.showLabel).toBe(true);
+  });
+
+  it('renders semantic branch edges with the branch color even without a layout plan', () => {
+    const edge: SkillEdgeV2 = {
+      id: 'branch',
+      source: 'decision',
+      target: 'path-a',
+      kind: 'branch',
+      ui: { semanticKind: 'branch' },
+    };
+
+    const visual = resolveEdgeVisual(edge, undefined, { selectedNodeId: null, fadeUnrelated: false });
+    expect(visual.stroke).toBe(BRANCH_EDGE_STROKE);
+    expect(visual.strokeDasharray).toBeTruthy();
   });
 
   it('uses distinct variable write and read colors', () => {

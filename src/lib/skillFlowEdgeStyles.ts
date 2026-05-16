@@ -15,9 +15,9 @@ export interface ResolvedEdgeVisual {
 
 const MUTED = 'var(--text-muted, #888)';
 const ACCENT = 'var(--accent, #6ea8fe)';
-const BRANCH = '#c9a227';
-const VALIDATION = '#5cbf7a';
-const WARN = '#e07050';
+export const BRANCH_EDGE_STROKE = '#c9a227';
+export const VALIDATION_EDGE_STROKE = '#5cbf7a';
+export const WARNING_EDGE_STROKE = '#e07050';
 export const RESPONSE_EDGE_STROKE = '#a78bfa';
 export const VARIABLE_WRITE_EDGE_STROKE = '#1f4f78';
 export const VARIABLE_READ_EDGE_STROKE = '#8fd3e8';
@@ -114,9 +114,9 @@ function groupColorKeyToEdgeStroke(ck: string | undefined): string | null {
       return 'rgba(180, 140, 255, 0.85)';
     case 'decision':
     case 'scoring':
-      return BRANCH;
+      return BRANCH_EDGE_STROKE;
     case 'validation':
-      return VALIDATION;
+      return VALIDATION_EDGE_STROKE;
     case 'artifact':
       return VARIABLE_WRITE_EDGE_STROKE;
     default:
@@ -130,14 +130,14 @@ function colorKeyStroke(ck: string | undefined): string | null {
       return ACCENT;
     case 'decision':
     case 'scoring':
-      return BRANCH;
+      return BRANCH_EDGE_STROKE;
     case 'validation':
     case 'generation':
-      return VALIDATION;
+      return VALIDATION_EDGE_STROKE;
     case 'artifact':
       return VARIABLE_WRITE_EDGE_STROKE;
     case 'fallback':
-      return WARN;
+      return WARNING_EDGE_STROKE;
     case 'muted':
       return MUTED;
     case 'response':
@@ -198,6 +198,20 @@ export function resolveEdgeVisual(
       showLabel: ep?.labelVisible ?? true,
     };
   }
+  if (semantic === 'branch') {
+    const neighbor =
+      opts.selectedNodeId &&
+      (edge.source === opts.selectedNodeId || edge.target === opts.selectedNodeId);
+    let opacity = 0.88;
+    if (opts.fadeUnrelated && opts.selectedNodeId && !neighbor) opacity *= 0.25;
+    return {
+      stroke: BRANCH_EDGE_STROKE,
+      strokeWidth: 2.85,
+      strokeDasharray: '2 4',
+      opacity,
+      showLabel: ep?.labelVisible ?? true,
+    };
+  }
   if (semantic === 'parallel') {
     const neighbor =
       opts.selectedNodeId &&
@@ -208,6 +222,34 @@ export function resolveEdgeVisual(
       stroke: groupStroke ?? '#7bdc9c',
       strokeWidth: 2.75,
       strokeDasharray: '4 2',
+      opacity,
+      showLabel: ep?.labelVisible ?? true,
+    };
+  }
+  if (semantic === 'constraint') {
+    const neighbor =
+      opts.selectedNodeId &&
+      (edge.source === opts.selectedNodeId || edge.target === opts.selectedNodeId);
+    let opacity = 0.78;
+    if (opts.fadeUnrelated && opts.selectedNodeId && !neighbor) opacity *= 0.25;
+    return {
+      stroke: WARNING_EDGE_STROKE,
+      strokeWidth: 2.65,
+      strokeDasharray: '4 3',
+      opacity,
+      showLabel: ep?.labelVisible ?? true,
+    };
+  }
+  if (semantic === 'support') {
+    const neighbor =
+      opts.selectedNodeId &&
+      (edge.source === opts.selectedNodeId || edge.target === opts.selectedNodeId);
+    let opacity = 0.56;
+    if (opts.fadeUnrelated && opts.selectedNodeId && !neighbor) opacity *= 0.25;
+    return {
+      stroke: groupStroke ?? MUTED,
+      strokeWidth: 2.35,
+      strokeDasharray: '6 4',
       opacity,
       showLabel: ep?.labelVisible ?? true,
     };
@@ -271,21 +313,21 @@ export function resolveEdgeVisual(
       opacity = 1;
       break;
     case 'branch':
-      stroke = BRANCH;
+      stroke = BRANCH_EDGE_STROKE;
       strokeWidth = 2;
       opacity = 0.85;
       break;
     case 'validation':
-      stroke = VALIDATION;
+      stroke = VALIDATION_EDGE_STROKE;
       strokeWidth = 2;
       break;
     case 'constraint':
-      stroke = WARN;
+      stroke = WARNING_EDGE_STROKE;
       dash = '4 3';
       opacity = 0.7;
       break;
     case 'fallback':
-      stroke = WARN;
+      stroke = WARNING_EDGE_STROKE;
       dash = '2 6';
       opacity = 0.65;
       break;

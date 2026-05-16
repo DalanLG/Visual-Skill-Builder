@@ -71,4 +71,34 @@ describe('graphToSkillMarkdown', () => {
     expect(md).toContain('Created by: A');
     expect(md).toContain('Used by: B');
   });
+
+  it('exports routable activation and final response sections without canvas metadata', () => {
+    const md = graphToSkillMarkdown({
+      ...minimalGraph(),
+      nodes: [
+        ...minimalGraph().nodes,
+        {
+          id: 'response',
+          label: 'Response',
+          kind: 'response',
+          responseSpec: {
+            audience: 'user',
+            format: 'markdown',
+            mustMentionArtifacts: [],
+            mustNotClaimWithoutEvidence: true,
+            missingDataBehavior: 'state_missing',
+            tone: 'direct',
+            requiredSections: [],
+            citationPolicy: 'artifact_only',
+          },
+        },
+      ],
+      edges: [...minimalGraph().edges, { id: 'eresp', source: 'b', target: 'response', kind: 'sequence' }],
+    });
+    expect(md).toContain('## Use when');
+    expect(md).toContain("## Don't use when");
+    expect(md).toContain('## Final Response');
+    expect(md).not.toContain('x:');
+    expect(md).not.toContain('manuallyPositioned');
+  });
 });
